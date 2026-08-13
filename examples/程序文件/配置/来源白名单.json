@@ -1,0 +1,13 @@
+{
+  "_说明": "来源白名单样本：validate.py 的来源校验维度读取 sources[].domains；新来源入库前先登记此处",
+  "_更新时间": "2026-06-30",
+  "sources": [
+    {
+      "name": "GitHub（示例）",
+      "type": "browser",
+      "domains": ["github.com"],
+      "采集方式": "网页读取工具或手动粘贴",
+      "格式": "markdown"
+    }
+  ]
+}

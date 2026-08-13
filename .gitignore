@@ -1,0 +1,6 @@
+# IDE / 临时产物
+.qoder/
+__pycache__/
+*.pyc
+_*.txt
+_*.py
