@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""agent-wiki Evaluator 示例：知识库六维校验治具（零依赖，仅标准库）
+"""agent-wiki Evaluator 示例：知识库七维校验治具（零依赖，仅标准库）
 
 用法:
     python scripts/validate.py <知识库根目录>
 
-六维校验:
+七维校验（结构层；判断层回测见 SKILL.md Lint 第 8 维，治具不覆盖）:
     1. 元数据完整性 — 原始采集文件须含 URL/采集时间/采集命令      (ERROR)
     2. 编码正确性   — UTF-8 可解码、无 U+FFFD、无双重编码签名      (ERROR)
     3. 格式规范性   — Markdown H1 开头、--- 分隔；JSON 须有 _metadata (ERROR)
     4. 命名规范     — 原始采集遵循 {source}_{topic}_{date}.{ext}   (WARN)
     5. 交叉引用     — Wiki 页面 Markdown 相对链接可达              (ERROR)
     6. 来源白名单   — 原始采集 URL 域名属于白名单                  (WARN)
+    7. 蒸馏卡规范性 — 蒸馏卡必含非空「适用边界」「来源指针」章节    (ERROR)
 
 退出码: 0 = PASS（无 ERROR），1 = FAIL。WARN 不阻塞。
 角色分离: 本脚本只做裁定，不修改任何文件。
@@ -38,6 +39,18 @@ BINARY_EXTENSIONS = {
 MOJIBAKE_SIGNS = set("瀹浠涓鏃鑷鐢鍑鍒銆锛鈥鑻鑺搷浣绋搴")
 NAME_RE = re.compile(r"^[a-z]+_.+_\d{8}\.\w+$")
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)#\s][^)]*)\)")
+CARD_PREFIX = "蒸馏卡_"
+CARD_REQUIRED_SECTIONS = ("适用边界", "来源指针")
+
+
+def card_section_body(content: str, name: str):
+    """返回蒸馏卡 `## name` 章节的正文（strip 后）；章节缺失返回 None。"""
+    m = re.search(rf"^##\s*{name}\s*$", content, re.M)
+    if not m:
+        return None
+    rest = content[m.end():]
+    nxt = re.search(r"^##\s", rest, re.M)
+    return (rest[: nxt.start()] if nxt else rest).strip()
 
 
 def load_whitelist(root: Path):
@@ -107,6 +120,14 @@ def check_file(fp: Path, root: Path, whitelist, errors, warns):
                     continue
                 if not (fp.parent / target).resolve().exists():
                     errors.append(f"{rel}: 交叉引用 — 断链 [{target}]")
+        # 维度 7：蒸馏卡规范性（语义要求下沉为结构特征，治具裁定）
+        if fp.name.startswith(CARD_PREFIX):
+            for sec in CARD_REQUIRED_SECTIONS:
+                body = card_section_body(content, sec)
+                if body is None:
+                    errors.append(f"{rel}: 蒸馏卡 — 缺少必需章节「{sec}」")
+                elif not body:
+                    errors.append(f"{rel}: 蒸馏卡 — 章节「{sec}」为空")
     elif suffix == ".json":
         try:
             data = json.loads(content)
