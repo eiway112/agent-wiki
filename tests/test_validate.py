@@ -192,6 +192,11 @@ class TestNonBlockingExemptions(FixtureCase):
     def test_d4_naming_is_warn_not_error(self):
         self.assertWarnOnly("原始采集/文章/no_date_suffix.md", GOOD_RAW_MD, "命名")
 
+    def test_d4_naming_also_covers_raw_json(self):
+        # 命名维度曾嵌在 .md 分支内，原始采集 JSON 逃逸该维度
+        (self.root / "原始采集" / "文章" / "sample_data_20260630.json").unlink()
+        self.assertWarnOnly("原始采集/文章/data_nodate.json", GOOD_RAW_JSON, "命名")
+
     def test_d6_unlisted_domain_is_warn_not_error(self):
         body = GOOD_RAW_MD.replace("https://github.com/example/fixture>",
                                    "https://evil.example.org/x>")

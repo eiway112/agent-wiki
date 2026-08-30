@@ -92,6 +92,10 @@ def check_file(fp: Path, root: Path, whitelist, errors, warns):
     if sig_hits > 5:
         errors.append(f"{rel}: 编码 — 疑似 GB18030 双重编码乱码（签名命中 {sig_hits}）")
 
+    # 维度 4：命名（知识库结构化文件豁免；二进制已在函数开头跳过）
+    if is_raw and not NAME_RE.match(fp.name):
+        warns.append(f"{rel}: 命名 — 不符合 {{source}}_{{topic}}_{{date}}.{{ext}}")
+
     if suffix == ".md":
         # 维度 3：格式（仅原始采集强制 H1 + 分隔线；Wiki 结构化页面豁免）
         if is_raw:
@@ -109,9 +113,6 @@ def check_file(fp: Path, root: Path, whitelist, errors, warns):
                 host = urlparse(m.group(0)).netloc.lower()
                 if not any(host == d or host.endswith("." + d) for d in whitelist):
                     warns.append(f"{rel}: 来源 — URL 域名 {host} 不在白名单")
-        # 维度 4：命名（知识库结构化文件豁免）
-        if is_raw and not NAME_RE.match(fp.name):
-            warns.append(f"{rel}: 命名 — 不符合 {{source}}_{{topic}}_{{date}}.{{ext}}")
         # 维度 5：交叉引用（Wiki 页面的相对链接）
         if is_wiki:
             for target in LINK_RE.findall(content):
