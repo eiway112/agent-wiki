@@ -55,6 +55,8 @@ python scripts/validate.py examples
 
 退出码：0 = PASS（无 ERROR），1 = FAIL。WARN 不阻塞但应定期审视（Harness 递减）。
 
+治具自身受红绿双向回归保护（`python tests/test_validate.py`）：正向验 `examples/` 判 PASS，反向按七维各造一次违规验均被拦为 ERROR，并验 WARN 不阻塞、二进制豁免留痕。CI（`.github/workflows/lint.yml`）在 Ubuntu 与 Windows 双平台执行同一套。
+
 ## 目录结构
 
 ```
@@ -66,6 +68,8 @@ agent-wiki/
 │   └── rule-template.md  ← 蒸馏产物模板（三出口标准形态）
 ├── scripts/
 │   └── validate.py       ← Evaluator 零依赖示例
+├── tests/
+│   └── test_validate.py  ← 治具自身的红绿双向回归（七维各造一次违规）
 └── examples/             ← 最小可跑通样本知识库
     ├── 原始采集/文章/
     ├── 知识库/目录.md + 蒸馏卡基线样张

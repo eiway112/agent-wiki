@@ -1,0 +1,31 @@
+name: lint
+
+# 治具自身必须有回归防护：一个只会亮绿灯的 Evaluator 无法支撑「真实执行结果是唯一验收标准」
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  evaluator:
+    name: 七维治具回归 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 红绿双向：examples 应 PASS + 七维各造一次违规须被拦下 + WARN 不得阻塞
+      - name: 治具回归测试
+        run: python tests/test_validate.py
+
+      # 冒烟：直接跑一次报告，确保 CLI 退出码契约（0=PASS）未漂移
+      - name: examples 判定应 PASS
+        run: python scripts/validate.py examples
