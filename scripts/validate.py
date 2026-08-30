@@ -18,7 +18,6 @@
 角色分离: 本脚本只做裁定，不修改任何文件。
 """
 
-import io
 import json
 import re
 import sys
@@ -139,7 +138,10 @@ def check_file(fp: Path, root: Path, whitelist, errors, warns):
 
 
 def main():
-    out = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    # 统一输出流：Windows 控制台/管道默认非 UTF-8，重配置编码后所有 print 共用同一缓冲，
+    # 避免自建 TextIOWrapper 与 sys.stdout 争用 fd 导致部分报告行丢失
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    out = sys.stdout
     if len(sys.argv) < 2:
         print("用法: python scripts/validate.py <知识库根目录>", file=out)
         return 1
