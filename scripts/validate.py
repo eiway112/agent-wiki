@@ -14,7 +14,9 @@
     6. 来源白名单   — 原始采集 URL 域名属于白名单                  (WARN)
     7. 蒸馏卡规范性 — 蒸馏卡必含非空「适用边界」「来源指针」章节    (ERROR)
 
-退出码: 0 = PASS（无 ERROR），1 = FAIL。WARN 不阻塞。
+退出码: 0 = 无 ERROR 且无必需检查被跳过，1 = FAIL。WARN 不阻塞。
+结果标签: 全维执行且无 ERROR → PASS；有可选检查被跳过且无 ERROR → PASS_WITH_SKIP
+（附覆盖率与 skip 原因，不得表述为全维通过）；有 ERROR 或必需检查被跳过 → FAIL。
 角色分离: 本脚本只做裁定，不修改任何文件。
 """
 
@@ -53,17 +55,25 @@ def card_section_body(content: str, name: str):
 
 
 def load_whitelist(root: Path):
+    """返回 (域名集合或 None, 跳过原因或 None)。
+
+    跳过必须显式记账：白名单缺失时维度 6 整体不执行，调用方须把原因计入
+    skip_reasons 并在汇总中输出覆盖率，禁止静默算 PASS（2026-09-15 整改，
+    对应第三方审计「SKIP 被汇总为 PASS」发现）。
+    """
     p = root / WHITELIST_REL
     if not p.exists():
-        return None
+        return None, "source_allowlist_missing"
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
         domains = set()
         for s in d.get("sources", []):
             domains.update(s.get("domains", []))
-        return domains
+        if not domains:
+            return None, "source_allowlist_empty"
+        return domains, None
     except (json.JSONDecodeError, OSError):
-        return None
+        return None, "source_allowlist_unparsable"
 
 
 def check_file(fp: Path, root: Path, whitelist, errors, warns):
@@ -151,7 +161,18 @@ def main():
         print(f"目录不存在: {root}", file=out)
         return 1
 
-    whitelist = load_whitelist(root)
+    whitelist, wl_skip = load_whitelist(root)
+    # 跳过记账：维度名 → 是否必需（必需=该维度在本脚本口径下可判 ERROR）。
+    # 本脚本维度 6「来源白名单」为 WARN 级，属可选检查；跳过它不得静默算 PASS，
+    # 但也不升级为 FAIL（必需检查被跳过才 FAIL，见汇总段）。
+    skip_reasons = []
+    if wl_skip:
+        skip_reasons.append(f"dimension_6_source_allowlist:{wl_skip}")
+    required_checks = 7
+    skipped_checks = 1 if wl_skip else 0
+    executed_checks = required_checks - skipped_checks
+    required_skipped = []  # 本脚本无 ERROR 级维度可被跳过；保留位供未来维度接入
+
     errors, warns = [], []
     files = sorted(
         p for p in root.rglob("*")
@@ -168,9 +189,22 @@ def main():
         print(f"  [ERROR] {e}", file=out)
     print("=" * 60, file=out)
     print(f"总问题数: {len(errors) + len(warns)} (ERROR: {len(errors)}, WARN: {len(warns)})", file=out)
+    coverage = executed_checks / required_checks
+    print(
+        f"覆盖率: required={required_checks} executed={executed_checks} "
+        f"skipped={skipped_checks} coverage_ratio={coverage:.3f}", file=out
+    )
+    for reason in skip_reasons:
+        print(f"  [SKIP] {reason}", file=out)
     if errors:
         print(f"结果: FAIL ({len(errors)} 个错误)", file=out)
         return 1
+    if required_skipped:
+        print(f"结果: FAIL (必需检查被跳过: {', '.join(required_skipped)})", file=out)
+        return 1
+    if skipped_checks:
+        print(f"结果: PASS_WITH_SKIP (coverage {executed_checks}/{required_checks}，非全维通过)", file=out)
+        return 0
     print("结果: PASS (所有校验通过)", file=out)
     return 0
 
