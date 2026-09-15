@@ -1,0 +1,38 @@
+{
+  "_说明": "运行时注入面声明（占位符模板）。这是「承担者自描述」文件：技能本体不假设任何平台路径，热层/温层的真实载体由每个落地实例自行填写并声明。复制本文件到 <你的知识库>/程序文件/配置/注入面.json，把 <...> 占位符替换为该平台的真实绝对路径与能力开关后，validate.py 维度 8/9 才会按实况解析蒸馏卡的落地指针。占位符未替换时载体不可达，维度 8 记 SKIP(unreachable)、🟢 降为 WARN，不静默生效——这是诚实降级，不是缺陷。",
+  "platform_capability": {
+    "_说明": "auto_injection=true 表示该平台能把热层索引常驻注入上下文（HOT 可达）；false 表示无常驻注入能力，memory 指针封顶温层（WARM，按需读取），属能力边界。",
+    "auto_injection": false
+  },
+  "surfaces": [
+    {
+      "kind": "memory_dir",
+      "scope": "user",
+      "path": "<USER_MEMORY_DIR>"
+    },
+    {
+      "kind": "memory_index",
+      "scope": "user",
+      "path": "<USER_MEMORY_DIR>/MEMORY.md"
+    },
+    {
+      "kind": "memory_dir",
+      "scope": "project",
+      "path": "<PROJECT_MEMORY_DIR>"
+    },
+    {
+      "kind": "memory_index",
+      "scope": "project",
+      "path": "<PROJECT_MEMORY_DIR>/MEMORY.md"
+    }
+  ],
+  "hot_layer_cap": {
+    "_说明": "热层（常驻索引）条目上限的唯一机器可读源，实例自治值；项目规范.md 只引用不复制。",
+    "user": 40,
+    "project": 30
+  },
+  "degradation": {
+    "surface_unreachable": "声明的 memory_dir 不存在（平台迁移或占位符未填）→ 指针记 UNVERIFIED，维度 8 记 SKIP，🟢 降 WARN，不报 ERROR。",
+    "auto_injection_false": "平台无常驻注入能力 → HOT 不可达，memory 指针封顶 WARM（按需）。这是能力边界，非缺陷。"
+  }
+}
