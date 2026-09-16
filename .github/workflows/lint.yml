@@ -9,7 +9,7 @@ on:
 
 jobs:
   evaluator:
-    name: 七维治具回归 (${{ matrix.os }})
+    name: 十一维治具回归 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 红绿双向：examples 应 PASS + 七维各造一次违规须被拦下 + WARN 不得阻塞
+      # 红绿双向：examples 应 PASS + 十一维各造一次违规须被拦下 + WARN 不得阻塞
       - name: 治具回归测试
         run: python tests/test_validate.py
 

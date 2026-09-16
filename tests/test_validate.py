@@ -57,7 +57,7 @@ WHITELIST = """{
 }
 """
 
-# 一份七维全过的原始采集条目，作为各反向用例的单点扰动基线
+# 一份十一维全过的原始采集条目，作为各反向用例的单点扰动基线
 GOOD_RAW_MD = """# 夹具条目
 
 **URL:** <https://github.com/example/fixture>
@@ -491,6 +491,19 @@ class AdoptedFixtureCase(FixtureCase):
         self.assertEqual(0, rc, f"注入面不可达应降级为 WARN，却失败：\n{out}")
         self.assertIn("注入面不可达", out)
         self.assertIn("dimension_8_injection_surface:unreachable", out)
+
+    def test_d9_index_ahead_of_ledger_errors(self):
+        # 维度 9 反向：新卡入库并在目录.md 建立引用，但台账未刷新——目录引用了台账中
+        # 不存在的卡，须 ERROR。维度 8 对「台账缺该行」不反应（漂移检查仅在 committed
+        # 行存在时触发），故此扰动单点落在维度 9。
+        self.write("知识库/蒸馏卡_new_20260630.md", ADOPTED_CARD)
+        self.write("知识库/目录.md",
+                   GOOD_INDEX + "- [落地卡](蒸馏卡_fix_20260630.md)\n"
+                   + "- [新卡](蒸馏卡_new_20260630.md)\n")
+        rc, out = run_validator(self.root)
+        self.assertEqual(1, rc, f"目录超前于台账应判 ERROR，却放行：\n{out}")
+        self.assertIn("目录台账一致性", out)
+        self.assertIn("但台账中不存在", out)
 
 
 if __name__ == "__main__":
