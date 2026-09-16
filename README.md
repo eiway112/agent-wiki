@@ -7,7 +7,7 @@
 ## 核心机制
 
 - **三层架构**：Raw Sources（原始采集，只读不可变）→ The Wiki（LLM 维护的派生内容）→ The Schema（人机共维的规范与配置）
-- **三操作**：Ingest（采集入库，0–8 步清单，第 0 步命中预登记）/ Query（**任务必经路径**：开工前检索既有 🟢 规则、交付时登记命中或未命中、好答案回填）/ Lint（结构层九维 + 判断层回测，🟢 回测到期由治具机算）
+- **三操作**：Ingest（采集入库，0–8 步清单，第 0 步命中预登记）/ Query（**任务必经路径**：开工前检索既有 🟢 规则、交付时登记命中或未命中、好答案回填）/ Lint（结构层十一维 + 判断层回测，🟢 回测到期由治具机算）
 - **角色分离**：Planner（人工定目标）/ Generator（LLM 执行）/ Evaluator（治具裁定）——**模型不得给自己打分**
 - **采集前价值契约**：四问先行（第 4 问重要主题必答：有无反方证据），价值判定不达标即显式中止，不强行入库
 - **库健康度看归因率不看采集量**：`命中 : 未命中`（分母＝带 `**命中:**` 字段的条目数）是主指标；采集条目数只度量进料。只在被点名时才查知识库的库，等价于不存在
@@ -43,7 +43,7 @@ python scripts/validate.py examples
 
 ## Evaluator 示例（scripts/validate.py）
 
-零依赖（仅 Python 3 标准库），覆盖 Lint 结构层九维：
+零依赖（仅 Python 3 标准库），覆盖 Lint 结构层十一维：
 
 | 维度 | 判定 |
 |---|---|
@@ -56,10 +56,12 @@ python scripts/validate.py examples
 | 蒸馏卡规范性（适用边界/来源指针必需且非空） | ERROR |
 | 落地台账一致性（状态↔载体↔台账；采用门控生效） | ERROR（缺指针/语法无效/🟢 无存活载体）；注入面不可达 → SKIP + 🟢 降 WARN |
 | 目录台账一致性（目录.md ↔ 落地台账；采用门控生效） | ERROR（目录引用卡不在台账）；WARN（台账卡目录未引用） |
+| 🟢 回测到期（机算日期锚点，t0「落地自查」不计） | ERROR（距最近合格回测 > 14 天）；WARN（无任何可用日期，不可核 ≠ 通过） |
+| 归因命中字段（ingest/lint/query 条目含非空 `**命中:**`） | WARN（缺失或留空；围栏示例不算登记）；无操作日志 → SKIP |
 
 退出码：0 = PASS / PASS_WITH_SKIP（有可选检查被跳过，如未采用门控 `not_adopted`、注入面不可达 `unreachable`，附覆盖率与 skip 原因，不表述为全维通过），1 = FAIL（有 ERROR）。WARN 不阻塞但应定期审视（Harness 递减）。`--refresh-landing-ledger` 是治具唯一写文件动作（生成机器可读的 `知识库/落地台账.md`，禁手编），门禁路径只读。
 
-治具自身受红绿双向回归保护（`python tests/test_validate.py`）：正向验 `examples/` 判 PASS，反向按九维各造一次违规验均被拦为 ERROR，并验 WARN 不阻塞、二进制豁免留痕、采用门控 `not_adopted` 跳过、注入面不可达降级 WARN、`auto_injection=false` 封顶 WARM。CI（`.github/workflows/lint.yml`）在 Ubuntu 与 Windows 双平台执行同一套。
+治具自身受红绿双向回归保护（`python tests/test_validate.py`）：正向验 `examples/` 判 PASS，反向按十一维各造一次违规验均被拦为 ERROR，并验 WARN 不阻塞、二进制豁免留痕、采用门控 `not_adopted` 跳过、注入面不可达降级 WARN、`auto_injection=false` 封顶 WARM。CI（`.github/workflows/lint.yml`）在 Ubuntu 与 Windows 双平台执行同一套。
 
 ## 目录结构
 
@@ -73,7 +75,7 @@ agent-wiki/
 ├── scripts/
 │   └── validate.py       ← Evaluator 零依赖示例
 ├── tests/
-│   └── test_validate.py  ← 治具自身的红绿双向回归（九维各造一次违规）
+│   └── test_validate.py  ← 治具自身的红绿双向回归（十一维各造一次违规）
 └── examples/             ← 最小可跑通样本知识库
     ├── 原始采集/文章/
     ├── 知识库/目录.md + 蒸馏卡基线样张 + 落地台账.md（机器生成）

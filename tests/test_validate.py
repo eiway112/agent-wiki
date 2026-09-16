@@ -3,11 +3,14 @@
 """scripts/validate.py 的红绿双向回归治具。
 
 正向：examples/ 须判 PASS（退出码 0）。
-反向：结构层九维各造一次违规，须被判 ERROR（退出码 1）且报出对应维度——
+反向：十一维各造一次违规，须被判 ERROR（退出码 1）且报出对应维度——
       只会亮绿灯的治具等于没有治具。
 豁免项：命名与来源白名单属 WARN，违规时退出码仍须为 0，防门禁把常态豁免误判为失败。
 采用门控：维度 8（落地台账一致性）/维度 9（目录台账一致性）仅在「注入面.json 存在
       或任一蒸馏卡携带『- 落地指针:』字段」时生效；未采用记 SKIP(not_adopted)，不报 ERROR。
+维度 10（🟢 回测到期）：夹具卡的合格回测锚点按运行日动态生成——写死日期会让夹具
+      随时间自然到期，红绿信号退化为日历函数；反向用例反过来构造超窗日期。
+维度 11（归因命中字段）：WARN 级，日志缺失记 SKIP 而非静默 PASS。
 
 零依赖（仅标准库）。跑法：
     python -m unittest discover -s tests -v
@@ -16,17 +19,37 @@
 """
 
 import json
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VALIDATOR = REPO_ROOT / "scripts" / "validate.py"
 EXAMPLES = REPO_ROOT / "examples"
 TMP_ROOT = REPO_ROOT / ".tmp" / "lint-fixtures"
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import validate  # noqa: E402  只为读取维度登记表：测试里手抄计数就是第二份漂移副本
+
+# 维度 10 的时间基准：一切夹具日期相对运行日生成
+TODAY = date.today()
+WINDOW_DAYS = validate.GREEN_BACKTEST_WINDOW_DAYS
+
+
+def days_ago(n: int) -> str:
+    return (TODAY - timedelta(days=n)).isoformat()
+
+
+def qualified_backtest(n: int = 0) -> str:
+    """三要素齐全的一条回测记录（n = 距今天数）。"""
+    return (f"- {days_ago(n)} | 执行者：独立评审者（非本卡 Generator）"
+            f" | 历史任务标识：夹具基线 {days_ago(n)} | 结论：保留\n")
+
 
 WHITELIST = """{
   "_说明": "测试夹具白名单",
@@ -60,7 +83,7 @@ GOOD_RAW_JSON = """{
 }
 """
 
-GOOD_CARD = """# 夹具蒸馏卡
+GOOD_CARD = f"""# 夹具蒸馏卡
 
 ---
 - 落地状态: 🟢 已落地
@@ -77,15 +100,30 @@ GOOD_CARD = """# 夹具蒸馏卡
 ## 来源指针
 
 - 原始采集/文章/sample_good_20260630.md
-"""
+
+## 回测记录
+
+{qualified_backtest()}"""
 
 GOOD_INDEX = """# 目录
 
 - [夹具条目](../原始采集/文章/sample_good_20260630.md)
 """
 
+# 基线操作日志：三类操作各带非空「**命中:**」字段，使维度 11 在基线上执行而非 SKIP
+GOOD_LOG = f"""# 操作日志
+
+## [{days_ago(1)}] ingest | 夹具条目入库
+
+- **命中:** 无命中（夹具库无 🟢 集，缺"入库价值判定"类规则）
+
+## [{days_ago(0)}] lint | 夹具全量体检
+
+- **命中:** 命中 夹具基线规则——按合格回测三要素改写夹具卡回测行
+"""
+
 # 采用态蒸馏卡：携带「- 落地指针:」字段，指向注入面声明的 memory 载体
-ADOPTED_CARD = """# 夹具落地卡
+ADOPTED_CARD = f"""# 夹具落地卡
 
 ---
 - 落地状态: 🟢 已落地
@@ -106,8 +144,7 @@ ADOPTED_CARD = """# 夹具落地卡
 
 ## 回测记录
 
-- 2026-06-30 | 夹具回测 | 通过。
-"""
+{qualified_backtest()}"""
 
 
 def run_validator(root: Path, *extra: str):
@@ -131,6 +168,7 @@ class FixtureCase(unittest.TestCase):
         self.write("原始采集/文章/sample_good_20260630.md", GOOD_RAW_MD)
         self.write("原始采集/文章/sample_data_20260630.json", GOOD_RAW_JSON)
         self.write("知识库/目录.md", GOOD_INDEX)
+        self.write("知识库/操作日志.md", GOOD_LOG)
         self.write("知识库/蒸馏卡_fixture_20260630.md", GOOD_CARD)
         rc, out = run_validator(self.root)
         self.assertEqual(0, rc, f"基线夹具本身不干净，反向用例会失去意义：\n{out}")
@@ -167,6 +205,17 @@ class TestPositiveBaseline(FixtureCase):
     def test_shipped_examples_pass(self):
         rc, out = run_validator(EXAMPLES)
         self.assertEqual(0, rc, f"仓库自带的 examples/ 应判 PASS：\n{out}")
+
+    def test_coverage_denominator_comes_from_dimension_registry(self):
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertIn(f"required={len(validate.DIMENSIONS)}", out)
+
+    def test_dimension_registry_matches_module_docstring(self):
+        # 「被调用但不在任何账上」的维度使覆盖率账从完备枚举退化为部分枚举：
+        # 登记表与 docstring 清单须逐项对齐，任一侧漏登记本用例即红
+        listed = re.findall(r"^\s+(\d+)\. ", validate.__doc__, re.M)
+        self.assertEqual([str(n) for n, _ in validate.DIMENSIONS], listed)
 
 
 class TestNegativeDimensions(FixtureCase):
@@ -236,6 +285,103 @@ class TestNonBlockingExemptions(FixtureCase):
         rc, out = run_validator(self.root)
         self.assertEqual(0, rc, f"二进制应豁免文本校验，却被判失败：\n{out}")
         self.assertIn("[SKIP]", out)
+
+
+class TestGreenBacktestStaleness(FixtureCase):
+    """维度 10：🟢 到期由机器算日期锚点；补合格回测与诚实降级是两个等价出口。"""
+
+    CARD = "知识库/蒸馏卡_fixture_20260630.md"
+
+    def card_with(self, record: str, status: str = "🟢") -> str:
+        body = GOOD_CARD.replace(qualified_backtest(), record)
+        return body.replace("- 落地状态: 🟢 已落地", f"- 落地状态: {status} 夹具状态")
+
+    def test_overdue_green_card_errors(self):
+        self.assertError(self.CARD, self.card_with(qualified_backtest(WINDOW_DAYS + 1)),
+                         "回测到期")
+
+    def test_window_boundary_is_not_overdue(self):
+        self.write(self.CARD, self.card_with(qualified_backtest(WINDOW_DAYS)))
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, f"窗口边界内的合格回测不应判到期：\n{out}")
+        self.assertNotIn("回测到期", out)
+
+    def test_dated_todo_does_not_reset_anchor(self):
+        # 「有日期、无三要素」的一行曾可清零到期数：治具须按内容判，不按有没有写字判
+        self.assertError(self.CARD, self.card_with(f"- {days_ago(0)} 待补回测\n"), "回测到期")
+
+    def test_t0_self_check_is_not_a_backtest(self):
+        record = qualified_backtest().replace("| 执行者", "| 落地自查（t0） | 执行者", 1)
+        self.assertError(self.CARD, self.card_with(record), "回测到期")
+
+    def test_missing_backtest_section_is_not_an_exemption(self):
+        body = self.card_with("").replace("## 回测记录", "## 其他")
+        self.assertError(self.CARD, body, "回测到期")
+
+    def test_downgrade_remains_a_valid_exit(self):
+        self.write(self.CARD, self.card_with("- 未回测，按诚实降级处理。\n", status="🟡"))
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, f"降级应是合法出口，却被判失败：\n{out}")
+        self.assertNotIn("回测到期", out)
+
+    def test_green_without_usable_anchor_is_warn_only(self):
+        # 卡名无日期且无合格记录：不可判 ≠ 通过，须现身为 WARN 而非静默留在不可判区
+        self.assertWarnOnly("知识库/蒸馏卡_无日期.md", self.card_with("- 未回测\n"),
+                            "无可解日期锚点")
+
+
+class TestAttributionHitField(FixtureCase):
+    """维度 11：只裁字段有无与非空，WARN 不阻塞；日志缺失记 SKIP 而非静默 PASS。"""
+
+    LOG = "知识库/操作日志.md"
+
+    def entry(self, tail: str, kind: str = "query") -> str:
+        return GOOD_LOG + f"\n## [{days_ago(0)}] {kind} | 追加条目\n{tail}"
+
+    def test_missing_field_is_warn_not_error(self):
+        self.assertWarnOnly(self.LOG, self.entry("查了，但没记命中。\n"), "归因命中")
+
+    def test_empty_field_is_not_a_record(self):
+        for field in ("**命中:**", "**命中：**", "**命中**:", "**命中**："):
+            with self.subTest(field=field):
+                self.assertWarnOnly(self.LOG, self.entry(f"- {field}   \n"), "归因命中")
+
+    def test_prose_mention_is_not_a_record(self):
+        self.assertWarnOnly(
+            self.LOG, self.entry("按规范要求填写 **命中:** 字段，但此处并未登记。\n"),
+            "归因命中")
+
+    def test_fenced_example_cannot_substitute(self):
+        for fence in ("```", "~~~~"):
+            with self.subTest(fence=fence):
+                body = self.entry(f"{fence}text\n**命中:** 无命中（示例）\n{fence}\n")
+                self.assertWarnOnly(self.LOG, body, "归因命中")
+
+    def test_three_legal_value_forms_pass(self):
+        for value in ("命中 夹具基线规则——改为先核验三要素",
+                      "无命中（缺「入库价值判定」类规则）",
+                      "不适用：纯转录，无决策点"):
+            with self.subTest(value=value):
+                self.write(self.LOG, self.entry(f"- **命中:** {value}\n"))
+                rc, out = run_validator(self.root)
+                self.assertEqual(0, rc, out)
+                self.assertNotIn("归因命中", out)
+
+    def test_other_entry_cannot_supply_missing_field(self):
+        body = (f"# 操作日志\n\n## [{days_ago(0)}] query | 第一项\n无字段\n"
+                f"\n## [{days_ago(0)}] lint | 第二项\n- **命中:** 无命中（缺规则）\n")
+        self.write(self.LOG, body)
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertIn("query 条目缺非空", out)
+        self.assertNotIn("lint 条目缺非空", out)
+
+    def test_missing_log_is_skip_not_silent_pass(self):
+        (self.root / "知识库" / "操作日志.md").unlink()
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertIn("dimension_11_attribution_hit:操作日志.md_missing", out)
+        self.assertIn("PASS_WITH_SKIP", out)
 
 
 class TestAdoptionGate(FixtureCase):

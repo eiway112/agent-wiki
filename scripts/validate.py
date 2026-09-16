@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""agent-wiki Evaluator 示例：知识库九维校验治具（零依赖，仅标准库）
+"""agent-wiki Evaluator 示例：知识库十一维校验治具（零依赖，仅标准库）
 
 用法:
     python scripts/validate.py <知识库根目录>
     python scripts/validate.py <知识库根目录> --refresh-landing-ledger
 
-九维校验（结构层；判断层回测见 SKILL.md Lint 第 8 维，治具不覆盖）:
+十一维校验（结构层 1-9；10/11 为判断层回测与归因的机检臂，不替代人工裁定）:
     1. 元数据完整性 — 原始采集文件须含 URL/采集时间/采集命令      (ERROR)
     2. 编码正确性   — UTF-8 可解码、无 U+FFFD、无双重编码签名      (ERROR)
     3. 格式规范性   — Markdown H1 开头、--- 分隔；JSON 须有 _metadata (ERROR)
@@ -16,6 +16,15 @@
     7. 蒸馏卡规范性 — 蒸馏卡必含非空「适用边界」「来源指针」章节    (ERROR)
     8. 落地台账一致性 — 蒸馏卡落地指针与注入面实况解析              (ERROR/WARN)
     9. 目录台账一致性 — 目录.md 引用的蒸馏卡与落地台账对账          (ERROR/WARN)
+   10. 🟢 回测到期   — 距最近合格回测超窗口判 ERROR，锚点由机器算    (ERROR/WARN)
+   11. 归因命中字段 — ingest/lint/query 条目须有非空「**命中:**」    (WARN)
+
+维度 10/11 的判据边界（越界即越权，猜真伪不如记不可判）:
+    维度 10 只求值「距最近一条三要素齐全记录的天数」，不裁执行者是否真独立、
+    结论是否正确——后者归判断层人工抽样；无可解锚点记 WARN，不静默算通过。
+    维度 11 只裁字段有无与非空，不裁命中真伪；`无命中` 是合法值，一个只能填
+    「命中」的字段没有信息量。两维均不受维度 8/9 采用门控约束：三色标记与操作
+    日志属核心流程，不依赖平台常驻注入能力。
 
 维度 8/9 的采用门控（声明决定义务，防跨平台假抽象）:
     知识库声明 程序文件/配置/注入面.json，或任一蒸馏卡携带「- 落地指针:」字段
@@ -74,6 +83,45 @@ CARD_STATUS_RE = re.compile(r"^-\s*落地状态:\s*(🟢|🟡|🔵)", re.M)
 VERDICT_RANK = {"INVALID": 0, "ORPHANED": 1, "NONE": 2, "WARM": 3, "HOT": 4}
 MACHINE_BLOCK_RE = re.compile(
     r"<!-- MACHINE-READABLE BEGIN -->(.*?)<!-- MACHINE-READABLE END -->", re.S)
+
+# ---------- 维度 10：🟢 回测到期（判断层回测的机检臂）----------
+# 阈值与判据的唯一机器源在此，SKILL.md 只引用不复制——手抄副本必漂移。
+GREEN_BACKTEST_WINDOW_DAYS = 14
+BACKTEST_SECTION = "回测记录"
+# t0「落地自查」行不作锚点：它由 Generator 落地当日自写，既未「超两周」也无
+# 「历史真实任务」，让它计锚等于把效果门的钥匙交回生成者。
+BACKTEST_T0_EXCLUDE_RE = re.compile(r"落地自查")
+
+# ---------- 维度 11：归因命中字段 ----------
+LOG_NAME = "操作日志.md"
+ATTRIBUTION_KINDS = ("ingest", "lint", "query")
+# 向前生效起点：空串 = 对全部条目生效（新建库的默认）。既有库中途采用本字段时
+# 改为该字段的落地日，豁免更早条目——append-only 历史不追改，强行补记只会催生
+# 事后编造的命中。
+ATTRIBUTION_FIELD_SINCE = ""
+LOG_ENTRY_RE = re.compile(r"^## \[(\d{4}-\d{2}-\d{2})\]\s+(\w+)\s*\|")
+# 字段拼写变体（`**命中:**` / `**命中：**` / `**命中**:`）与可选列表前缀都算登记，
+# 但值必须非空：空值与「没人填过」不可区分，正是本维要封堵的静默。
+HIT_FIELD_RE = re.compile(r"^\s*(?:-[ \t]+)?\*\*命中(?:[：:]\*\*|\*\*[：:])[ \t]*(.*)$")
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+# ---------- 维度登记表（覆盖率账的唯一机器源）----------
+# 新增维度必须登记于此：required_checks 由本表推导，不再硬编码计数。
+# 「被 main() 调用但不在任何账上」的维度会让覆盖率账从完备枚举退化为部分枚举，
+# 且对读者不作声明——本表即为封堵该缺陷而存在。
+DIMENSIONS = (
+    (1, "元数据完整性"),
+    (2, "编码正确性"),
+    (3, "格式规范性"),
+    (4, "命名规范"),
+    (5, "交叉引用"),
+    (6, "来源白名单"),
+    (7, "蒸馏卡规范性"),
+    (8, "落地台账一致性"),
+    (9, "目录台账一致性"),
+    (10, "🟢 回测到期"),
+    (11, "归因命中字段"),
+)
 
 
 def card_section_body(content: str, name: str):
@@ -236,7 +284,7 @@ def refresh_landing_ledger(root: Path) -> str:
     cards = iter_cards(root)
     rows = [card_landing_row(c, surfaces) for c in cards]
 
-    # 膨胀账本：热层条目数 / 上限 / 孤儿数 / 待回测 🟢 数
+    # 膨胀账本：热层条目数 / 上限 / 孤儿数 / 🟢 回测到期未更新数 / 无锚点不可判数
     caps = (surfaces or {}).get("hot_layer_cap", {})
     index_lines = []
     over_cap = []
@@ -254,13 +302,7 @@ def refresh_landing_ledger(root: Path) -> str:
         if cap and n > cap:
             over_cap.append(f"{key}={n}>{cap}")
     orphans = [r["card"] for r in rows if r["verdict"] == "ORPHANED"]
-    pending_retest = []
-    for c in cards:
-        body = c.read_text(encoding="utf-8-sig")
-        m = CARD_STATUS_RE.search(body)
-        if m and m.group(1) == "🟢":
-            if card_section_body(body, "回测记录") is None:
-                pending_retest.append(c.name)
+    overdue, unanchorable = green_backtest_facts(root)
 
     lines = [
         "# 落地台账",
@@ -272,7 +314,10 @@ def refresh_landing_ledger(root: Path) -> str:
         f"- 生成时间: {datetime.now().isoformat(timespec='seconds')}",
         f"- 注入面可达: {'否（' + surf_skip + '）' if surf_skip else '是'}",
         f"- 孤儿指针数: {len(orphans)}",
-        f"- 待回测🟢数: {len(pending_retest)}",
+        f"- 🟢 回测到期未更新数: {len(overdue)}"
+        f"（判据：距最近合格回测 >{GREEN_BACKTEST_WINDOW_DAYS} 天，t0「落地自查」不计锚点）",
+        f"- 🟢 回测无锚点不可判数: {len(unanchorable)}"
+        + (f"（{', '.join(unanchorable)}）" if unanchorable else "（无）"),
         f"- 热层超限: {'是（' + ', '.join(over_cap) + '）' if over_cap else '否'}",
         *index_lines,
         "",
@@ -407,6 +452,136 @@ def check_index_ledger_consistency(root: Path, errors, warns, skip_reasons):
             "应在目录.md 中建立引用")
 
 
+# ---------- 维度 10/11：判断层回测与归因的机检臂 ----------
+
+def backtest_anchor_days(body: str, card_name: str):
+    """距最近一条合格回测的天数；无可解锚点返回 None。
+
+    只取三要素（执行者／历史任务标识／结论）齐全的记录——缺一即未回测，
+    「- 2026-06-30 待补回测」这类有日期无内容的行不得清零到期数。无合格记录时
+    回落到卡名日期（落地日），使「一条回测都没有」等于满窗到期而不是永久免检。
+    独立性与结论真伪不在本函数判据内（归判断层人工抽样），猜即越界。
+    """
+    seg = card_section_body(body, BACKTEST_SECTION) or ""
+    today = datetime.now().date()
+    parsed = []
+    for record in re.split(r"(?m)^(?=-[ \t]+\d{4}-\d{2}-\d{2}\b)", seg):
+        header = record.splitlines()[0] if record else ""
+        stamp = re.match(r"-[ \t]+(\d{4}-\d{2}-\d{2})\b", header)
+        if not stamp or BACKTEST_T0_EXCLUDE_RE.search(header):
+            continue
+        text = record.replace("**", "").replace("`", "")
+        executor = re.search(r"执行者[：:][ \t]*([^\n|｜]+)", text)
+        task = re.search(r"(?:历史任务标识|回测靶)[：:][ \t]*([^\n|｜]+)", text)
+        verdict = re.search(r"(?:结论|裁定)[：:][ \t]*(?:保留|降级|补边界)", text)
+        if not (executor and executor.group(1).strip()
+                and task and task.group(1).strip() and verdict):
+            continue
+        try:
+            day = datetime.strptime(stamp.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if day <= today:  # 未来日期不清零：写在纸上的将来不算已发生
+            parsed.append(day)
+    if not parsed:
+        stamp = re.search(r"(\d{8})(?=\.md$)", card_name)
+        if stamp:
+            try:
+                day = datetime.strptime(stamp.group(1), "%Y%m%d").date()
+            except ValueError:
+                return None
+            if day <= today:
+                parsed.append(day)
+    return (today - max(parsed)).days if parsed else None
+
+
+def green_backtest_facts(root: Path):
+    """返回 (到期明细, 无锚点卡名)：🟢 卡的到期由机器算日期锚点，不由卡内散文自报。
+
+    散文不会自己过期——「（待首轮回测：落地未满两周）」式相对时间实测把 🟢 卡
+    豁免成永久免检，故一律交 backtest_anchor_days 求值。
+    """
+    overdue, unanchorable = [], []
+    for card in iter_cards(root):
+        body = card.read_text(encoding="utf-8-sig", errors="replace")
+        status = CARD_STATUS_RE.search(body)
+        if not status or status.group(1) != "🟢":
+            continue
+        days = backtest_anchor_days(body, card.name)
+        if days is None:
+            unanchorable.append(card.name)
+        elif days > GREEN_BACKTEST_WINDOW_DAYS:
+            overdue.append((card.name, days))
+    return overdue, unanchorable
+
+
+def check_green_backtest_staleness(root: Path, errors, warns, skip_reasons):
+    """维度 10：🟢 卡回测到期（判断层「蒸馏回测」的机检臂，非其替代）。
+
+    封堵的失效模式：效果门只由「人记得在 Lint 时抽样」承担时，实测可长期零执行
+    而门禁全绿——挂在必经路径上的机制才会被执行，故本维随每次门禁运行。
+    合法出口有二且等价：①补一条合格回测；②降级 🟡/🔵。**允许降级正是防凑数的设计**
+    ——补不出真回测时诚实降级必过，写假回测则无收益。
+    """
+    overdue, unanchorable = green_backtest_facts(root)
+    for name, days in overdue:
+        errors.append(
+            f"{WIKI_DIR}/{name}: 回测到期 — 🟢 距最近合格回测 {days} 天 > "
+            f"{GREEN_BACKTEST_WINDOW_DAYS} 天窗口；出口二选一且等价："
+            "①交非本卡 Generator 的执行者用 1 个历史真实任务回测，记录含三要素"
+            "（执行者／历史任务标识／结论）；②降级为 🟡 或 🔵")
+    for name in unanchorable:
+        warns.append(
+            f"{WIKI_DIR}/{name}: 回测到期 — 🟢 无可解日期锚点，本维不可判其到期"
+            "（不可核不等于通过，勿静默留在不可判区）；补形如"
+            "「- 2026-06-30 | 执行者：… | 历史任务标识：… | 结论：保留」的记录，或改判状态")
+
+
+def check_attribution_hit_field(root: Path, errors, warns, skip_reasons):
+    """维度 11：ingest/lint/query 条目须携带非空「**命中:**」字段。
+
+    归因率（命中 : 未命中）是本库健康度主指标，其分母只能来自逐条登记；
+    字段缺失时"库在自转"与"库在生效"不可区分。本维只裁字段有无与非空，
+    不裁命中真伪——真伪由判断层抽样（说不出被改变的具体决策即未命中）。
+    """
+    log_file = root / WIKI_DIR / LOG_NAME
+    if not log_file.exists():
+        skip_reasons.append(f"dimension_11_attribution_hit:{LOG_NAME}_missing")
+        warns.append(
+            f"{WIKI_DIR}/{LOG_NAME}: 归因命中 — 操作日志缺失，本维未执行"
+            "（归因率无源头数据；SKILL.md 约定该文件为 append-only 登记面）")
+        return
+    entries = []  # [日期, 类型, 是否已登记非空字段]
+    fence = None
+    for line in log_file.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        marker = FENCE_RE.match(line)
+        if fence:
+            # 围栏内是示例文本，不得顶替真实登记（否则贴一段示例即可清零本维）
+            if re.fullmatch(r" {0,3}" + re.escape(fence[0])
+                            + "{" + str(len(fence)) + r",}[ \t]*", line):
+                fence = None
+            continue
+        if marker:
+            fence = marker.group(1)
+            continue
+        header = LOG_ENTRY_RE.match(line)
+        if header:
+            entries.append([header.group(1), header.group(2), False])
+            continue
+        field = HIT_FIELD_RE.match(line)
+        if entries and field and field.group(1).strip():
+            entries[-1][2] = True
+    for date, kind, registered in entries:
+        if kind not in ATTRIBUTION_KINDS or registered:
+            continue
+        if date < ATTRIBUTION_FIELD_SINCE:
+            continue
+        warns.append(
+            f"{WIKI_DIR}/{LOG_NAME}: 归因命中 — [{date}] {kind} 条目缺非空"
+            "「**命中:**」字段，归因登记不完整；三型取值见 SKILL.md「Query」节 B 段"
+            "（「无命中（缺哪类规则）」是合法值，正文提及字段名不算登记）")
+
+
 def check_file(fp: Path, root: Path, whitelist, errors, warns):
     rel = fp.relative_to(root)
     parts = rel.parts
@@ -486,7 +661,7 @@ def main():
     out = sys.stdout
 
     parser = argparse.ArgumentParser(
-        description="agent-wiki 知识库治具 — 九维结构校验（含落地台账/目录一致性）")
+        description="agent-wiki 知识库治具 — 十一维结构校验（含落地台账/目录一致性、回测到期与归因登记）")
     parser.add_argument("root", help="知识库根目录")
     parser.add_argument(
         "--refresh-landing-ledger", action="store_true",
@@ -505,7 +680,8 @@ def main():
     skip_reasons = []
     if wl_skip:
         skip_reasons.append(f"dimension_6_source_allowlist:{wl_skip}")
-    required_checks = 9
+    # 覆盖率分母由维度登记表推导：新增维度改表即入账，不再靠人记得改计数
+    required_checks = len(DIMENSIONS)
 
     errors, warns = [], []
     files = sorted(
@@ -528,6 +704,11 @@ def main():
     else:
         skip_reasons.append("dimension_8_landing_ledger:not_adopted")
         skip_reasons.append("dimension_9_index_ledger:not_adopted")
+
+    # 维度 10/11 不受采用门控约束：三色标记与操作日志属核心流程，任何平台上都存在
+    # 承担者；把它们挂在必经门禁上正是为了不让效果门与归因登记退回「人记得做」。
+    check_green_backtest_staleness(root, errors, warns, skip_reasons)
+    check_attribution_hit_field(root, errors, warns, skip_reasons)
 
     skipped_dims = {r.split(":")[0] for r in skip_reasons}
     skipped_checks = len(skipped_dims)
