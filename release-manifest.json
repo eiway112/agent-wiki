@@ -13,9 +13,9 @@
     "policies/core.json",
     "policies/knowledge-collection-workflow.json",
     "adapters/qoder/adapter.json",
+    "references/rule-template.md",
     "templates/instance-manifest.json",
-    "templates/qoder-injection-surface.json",
-    "templates/rule-template.md"
+    "templates/qoder-injection-surface.json"
   ],
   "exclude_content_roots": [
     "原始采集",

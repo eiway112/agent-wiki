@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -115,6 +116,48 @@ class PortableInstanceTest(unittest.TestCase):
         tampered = self.lock_check(lock_validator, manifest)
         self.assertNotEqual(tampered.returncode, 0)
         self.assertEqual(json.loads(tampered.stdout)["status"], "FAIL")
+
+
+class ReleaseManifestSelfConsistencyTest(unittest.TestCase):
+    """发行清单是手工枚举的白名单：漏列即静默不发行，故须有机核守卫而非靠记得。"""
+
+    MUST_SHIP = ("SKILL.md", "LICENSE.md")
+    REF_RE = re.compile(r"`([^`\s]+)`|\]\(([^)\s]+)\)")
+
+    def setUp(self):
+        manifest = json.loads((PACKAGE_ROOT / "release-manifest.json").read_text(encoding="utf-8"))
+        self.include = set(manifest["include"])
+
+    def unshipped_pointers(self, include):
+        dead = []
+        for rel in sorted(include):
+            path = PACKAGE_ROOT / rel
+            if path.suffix != ".md":
+                continue
+            for backtick, link in self.REF_RE.findall(path.read_text(encoding="utf-8")):
+                token = (backtick or link).strip("./")
+                if not token or "{" in token:
+                    continue
+                if (PACKAGE_ROOT / token).is_file() and token not in include:
+                    dead.append(f"{rel} -> {token}")
+        return dead
+
+    def test_must_ship_files_are_included(self):
+        for name in self.MUST_SHIP:
+            self.assertIn(name, self.include, f"{name} 属必发物，漏列 include 即静默不发行")
+
+    def test_shipped_docs_point_only_to_shipped_paths(self):
+        self.assertEqual(
+            [], self.unshipped_pointers(self.include),
+            "发行文档正文指向仓内存在但未发行的路径，包内即死链")
+
+    def test_guard_fails_on_dropped_include_entry(self):
+        # 负向注入：摘掉一项发行物，守卫须报出指向它的死链，否则本守卫为空跑
+        shrunk = set(self.include)
+        shrunk.discard("references/rule-template.md")
+        self.assertIn(
+            "SKILL.md -> references/rule-template.md",
+            self.unshipped_pointers(shrunk))
 
 
 if __name__ == "__main__":

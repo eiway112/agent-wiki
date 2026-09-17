@@ -116,7 +116,7 @@ description: 按 Karpathy LLM Wiki 模式运营智能体知识库：Ingest 采�
 - `hot_layer_cap`：热层条目上限的**唯一机器可读源**（项目规范只引用不复制，避免手抄副本漂移）
 - `degradation`：降级语义说明
 
-`examples/程序文件/配置/注入面.json` 提供占位符模板（`<USER_MEMORY_DIR>` 等）；复制后把占位符替换为本平台真实路径即生效，未替换时载体不可达，按降级语义处理。
+`templates/qoder-injection-surface.json` 提供占位符模板（`<QODER_USER_MEMORY_DIR>` 等，由 `adapters/qoder/adapter.json` 声明为 `injection_surface_template`）；复制后把占位符替换为本平台真实路径即生效，未替换时载体不可达，按降级语义处理。
 
 ### 落地指针语法（蒸馏卡「`- 落地指针:`」字段）
 
