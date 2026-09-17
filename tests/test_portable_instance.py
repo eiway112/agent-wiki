@@ -15,7 +15,9 @@ LOCK_VALIDATE = PACKAGE_ROOT / "scripts" / "validate_release_lock.py"
 
 class PortableInstanceTest(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir=Path(__file__).parent)
+        fixture_root = PACKAGE_ROOT / ".tmp" / "portable-instance-fixtures"
+        fixture_root.mkdir(parents=True, exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=fixture_root)
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
         self.user_memory = self.base / "user-memory"

@@ -8,7 +8,7 @@
 
 - 文件名：`蒸馏卡_{topic}_{date}.md`，置于 `知识库/` 目录，并在 `目录.md` 建立引用；
 - 🟢/🟡 落地必产卡；🔵 可不产卡（操作日志简述原因）；
-- `落地指针` 声明本卡真实落地载体，供 validate.py 维度 8 核验「状态↔载体↔台账」一致：🟢 须指向存活载体（判定 ≥ WARM），🔵/无载体记 `none`；判定阶梯由弱到强 `INVALID<ORPHANED<NONE<WARM<HOT`，注入面不可达时降级为 `UNVERIFIED`（🟢 降 WARN）而非假 ERROR（详见 SKILL.md「记忆分层与注入面抽象」）；
+- `落地指针` 声明本卡真实落地载体，供 validate.py 维度 8 核验「状态↔载体↔台账」一致：🟢 须指向存活载体（判定 ≥ WARM），🔵/无载体记 `none`；判定阶梯由弱到强 `INVALID<ORPHANED<NONE<DOC<WARM<HOT`，注入面不可达时降级为 `UNVERIFIED`（🟢 降 WARN）而非假 ERROR（详见 SKILL.md「记忆分层与注入面抽象」）；
 - 蒸馏到 Memory 时，卡正文即 Memory 内容底稿，「适用边界」须随 Memory 正文一同写入；
 - 蒸馏到规范/Skill 时，卡作为该规范段落或 Skill 条目的来源凭证。
 

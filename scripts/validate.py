@@ -43,7 +43,7 @@
     - 落地指针: file:<绝对路径>[#锚点]  → 存在性解析（规范/Skill 等非驻留载体）
     - 落地指针: none                    → 无载体（🔵 参考索引）
 判定阶梯（卡判定取最差指针，注入层级取最强指针）:
-    INVALID < ORPHANED < NONE < WARM < HOT；另有 MISSING_FIELD、UNVERIFIED。
+    INVALID < ORPHANED < NONE < DOC < WARM < HOT；另有 MISSING_FIELD、UNVERIFIED。
 
 退出码: 0 = 无 ERROR 且无必需检查被跳过，1 = FAIL。WARN 不阻塞。
 结果标签: 全维执行且无 ERROR → PASS；有可选检查被跳过且无 ERROR → PASS_WITH_SKIP
