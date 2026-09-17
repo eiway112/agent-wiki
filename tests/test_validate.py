@@ -472,6 +472,20 @@ class AdoptedFixtureCase(FixtureCase):
         self.assertIn("<!-- MACHINE-READABLE BEGIN -->", ledger)
         self.assertIn("verdict=HOT", ledger)
 
+    def test_d8_refresh_refuses_linked_ledger(self):
+        ledger = self.root / "知识库" / "落地台账.md"
+        ledger.unlink()
+        sentinel = self.root.parent / "outside-ledger.md"
+        sentinel.write_text("must not change", encoding="utf-8")
+        try:
+            ledger.symlink_to(sentinel)
+        except OSError as exc:
+            self.skipTest(f"当前平台无法创建文件符号链接: {exc}")
+        rc, out = run_validator(self.root, "--refresh-landing-ledger")
+        self.assertEqual(1, rc, out)
+        self.assertIn("安全写入被拒绝", out)
+        self.assertEqual("must not change", sentinel.read_text(encoding="utf-8"))
+
     def test_d8_auto_injection_false_caps_warm(self):
         # 平台无常驻注入能力：HOT 不可达，memory 指针封顶 WARM——能力边界非缺陷，不得 ERROR
         self.surface["platform_capability"]["auto_injection"] = False

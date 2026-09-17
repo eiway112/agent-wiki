@@ -54,8 +54,11 @@
 
 import argparse
 import json
+import os
 import re
+import stat
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -272,6 +275,30 @@ def card_landing_row(card: Path, surfaces) -> dict:
     return row
 
 
+def is_link_or_reparse_point(path: Path) -> bool:
+    info = os.lstat(path)
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def replace_landing_ledger(wiki: Path, content: str):
+    if is_link_or_reparse_point(wiki):
+        raise ValueError(f"{WIKI_DIR}不得为符号链接或重解析点")
+    ledger = wiki / LEDGER_NAME
+    if ledger.exists() or ledger.is_symlink():
+        if is_link_or_reparse_point(ledger):
+            raise ValueError(f"{WIKI_DIR}/{LEDGER_NAME}不得为符号链接或重解析点")
+    fd, temporary_name = tempfile.mkstemp(prefix=".landing-ledger-", suffix=".tmp", dir=wiki)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        os.replace(temporary, ledger)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
 def refresh_landing_ledger(root: Path) -> str:
     """生成仓内 落地台账.md（含机器可读块与膨胀账本），返回注入面跳过原因或空串。
 
@@ -338,7 +365,7 @@ def refresh_landing_ledger(root: Path) -> str:
             f"layer={r['layer']} pointers={'missing' if r['pointers'] is None else ';'.join(r['pointers'])}"
         )
     lines.append("<!-- MACHINE-READABLE END -->")
-    (wiki / LEDGER_NAME).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    replace_landing_ledger(wiki, "\n".join(lines) + "\n")
     return surf_skip or ""
 
 
@@ -705,7 +732,11 @@ def main():
     # 否则记 not_adopted 跳过——防跨平台假抽象（无落地指针约定的库不应被强判 ERROR）。
     if mechanism_adopted(root):
         if args.refresh_landing_ledger:
-            refresh_landing_ledger(root)
+            try:
+                refresh_landing_ledger(root)
+            except (OSError, ValueError) as exc:
+                print(f"  [ERROR] {WIKI_DIR}/{LEDGER_NAME}: 安全写入被拒绝 — {exc}", file=out)
+                return 1
             print(f"  [WRITE] {WIKI_DIR}/{LEDGER_NAME} 已重新生成", file=out)
         check_landing_consistency(root, errors, warns, skip_reasons)
         check_index_ledger_consistency(root, errors, warns, skip_reasons)

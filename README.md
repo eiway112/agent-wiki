@@ -49,7 +49,7 @@ python scripts/validate.py examples
 
 ## 发行与实例锁
 
-本仓是唯一可分发的 `agent-wiki` 源。`release-manifest.json` 的显式 `include` 清单是发行身份的唯一输入；`scripts/build_release.py` 只复制清单文件并生成带 `release_id` 的 `release.json`，拒绝内容根目录进入发行包。
+本仓是唯一可分发的 `agent-wiki` 源。`release-manifest.json` 的显式 `include` 清单是发行身份的唯一输入；`scripts/build_release.py` 只复制清单文件并生成带 `release_id` 的 `release.json`，拒绝内容根目录、符号链接与重解析点进入发行包。输出目录必须不存在，构建器以原子创建方式拒绝覆盖已有路径。
 
 实例仅保留其配置、策略副本和 `程序文件/配置/agent-wiki-release.lock.json`。运行 `python scripts/validate_release_lock.py --instance <实例 manifest>` 会核验发行身份、实例策略哈希及源策略字节一致性；该路径只读取发行清单列出的文件和实例配置，绝不枚举或读取实例的 `原始采集/`、`知识库/`。
 
@@ -71,7 +71,7 @@ python scripts/validate.py examples
 | 🟢 回测到期（机算日期锚点，t0「落地自查」不计） | ERROR（距最近合格回测 > 14 天）；WARN（无任何可用日期，不可核 ≠ 通过） |
 | 归因命中字段（ingest/lint/query 条目含非空 `**命中:**`） | WARN（缺失或留空；围栏示例不算登记）；无操作日志 → SKIP |
 
-退出码：0 = PASS / PASS_WITH_SKIP（有可选检查被跳过，如未采用门控 `not_adopted`、注入面不可达 `unreachable`，附覆盖率与 skip 原因，不表述为全维通过），1 = FAIL（有 ERROR）。WARN 不阻塞但应定期审视（Harness 递减）。`--refresh-landing-ledger` 是治具唯一写文件动作（生成机器可读的 `知识库/落地台账.md`，禁手编），门禁路径只读。
+退出码：0 = PASS / PASS_WITH_SKIP（有可选检查被跳过，如未采用门控 `not_adopted`、注入面不可达 `unreachable`，附覆盖率与 skip 原因，不表述为全维通过），1 = FAIL（有 ERROR）。WARN 不阻塞但应定期审视（Harness 递减）。`--refresh-landing-ledger` 是治具唯一写文件动作（原子生成机器可读的 `知识库/落地台账.md`，禁手编）；它拒绝符号链接与重解析点，门禁路径只读。
 
 治具自身受红绿双向回归保护（`python tests/test_validate.py`）：正向验 `examples/` 判 PASS，反向按十一维各造一次违规验均被拦为 ERROR，并验 WARN 不阻塞、二进制豁免留痕、采用门控 `not_adopted` 跳过、注入面不可达降级 WARN、`auto_injection=false` 封顶 WARM。CI（`.github/workflows/lint.yml`）在 Ubuntu 与 Windows 双平台执行同一套。
 

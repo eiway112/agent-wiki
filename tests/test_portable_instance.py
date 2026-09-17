@@ -2,11 +2,14 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PACKAGE_ROOT / "scripts"))
+from release_contract import release_descriptor  # noqa: E402
 ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 INIT = PACKAGE_ROOT / "scripts" / "init_instance.py"
 BUILD = PACKAGE_ROOT / "scripts" / "build_release.py"
@@ -117,6 +120,27 @@ class PortableInstanceTest(unittest.TestCase):
         self.assertNotEqual(tampered.returncode, 0)
         self.assertEqual(json.loads(tampered.stdout)["status"], "FAIL")
 
+    def test_release_build_refuses_existing_output_directory(self):
+        release = self.base / "release"
+        release.mkdir()
+        result = subprocess.run(["python", str(BUILD), "--output", str(release)],
+                                capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((release / "release.json").exists())
+
+    def test_release_build_refuses_output_link(self):
+        sentinel = self.base / "sentinel"
+        sentinel.mkdir()
+        release = self.base / "release"
+        try:
+            release.symlink_to(sentinel, target_is_directory=True)
+        except OSError as exc:
+            self.skipTest(f"当前平台无法创建目录符号链接: {exc}")
+        result = subprocess.run(["python", str(BUILD), "--output", str(release)],
+                                capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((sentinel / "release.json").exists())
+
 
 class ReleaseManifestSelfConsistencyTest(unittest.TestCase):
     """发行清单是手工枚举的白名单：漏列即静默不发行，故须有机核守卫而非靠记得。"""
@@ -141,6 +165,24 @@ class ReleaseManifestSelfConsistencyTest(unittest.TestCase):
                 if (PACKAGE_ROOT / token).is_file() and token not in include:
                     dead.append(f"{rel} -> {token}")
         return dead
+
+    def test_release_contract_refuses_linked_source_file(self):
+        fixture_root = PACKAGE_ROOT / ".tmp" / "release-contract-fixtures"
+        fixture_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=fixture_root) as temporary:
+            package = Path(temporary) / "package"
+            package.mkdir()
+            (package / "release-manifest.json").write_text(
+                json.dumps({"format": "agent-wiki-release/v1", "version": "1", "include": ["payload.md"]}),
+                encoding="utf-8")
+            sentinel = Path(temporary) / "outside.md"
+            sentinel.write_text("must not ship", encoding="utf-8")
+            try:
+                (package / "payload.md").symlink_to(sentinel)
+            except OSError as exc:
+                self.skipTest(f"当前平台无法创建文件符号链接: {exc}")
+            with self.assertRaises(ValueError):
+                release_descriptor(package)
 
     def test_must_ship_files_are_included(self):
         for name in self.MUST_SHIP:

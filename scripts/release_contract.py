@@ -1,18 +1,55 @@
 #!/usr/bin/env python3
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 
 
-def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def _is_reparse_point(path: Path) -> bool:
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise ValueError(f"路径不可读取: {path}: {exc}") from exc
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def _read_regular_file(path: Path, label: str) -> bytes:
+    if _is_reparse_point(path):
+        raise ValueError(f"{label}不得为符号链接或重解析点: {path}")
+    try:
+        info = os.stat(path)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"{label}必须是普通文件: {path}")
+        with path.open("rb") as handle:
+            return handle.read()
+    except OSError as exc:
+        raise ValueError(f"{label}不可读取: {path}: {exc}") from exc
+
+
+def _safe_release_file(package_root: Path, entry: object, excluded: set[str]) -> tuple[str, Path]:
+    if not isinstance(entry, str):
+        raise ValueError(f"发行清单包含非法路径: {entry}")
+    relative = Path(entry)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"发行清单包含非法路径: {entry}")
+    if relative.parts and relative.parts[0] in excluded:
+        raise ValueError(f"发行清单不得包含内容根目录: {entry}")
+
+    current = package_root
+    for part in relative.parts:
+        current /= part
+        if _is_reparse_point(current):
+            raise ValueError(f"发行清单文件不得经由符号链接或重解析点: {entry}")
+    return relative.as_posix(), current
 
 
 def load_release_manifest(package_root: Path) -> dict:
     path = package_root / "release-manifest.json"
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        manifest = json.loads(_read_regular_file(path, "发行清单").decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"发行清单不可读取: {exc}") from exc
     if manifest.get("format") != "agent-wiki-release/v1":
         raise ValueError("不支持的发行 manifest 格式")
@@ -23,33 +60,41 @@ def load_release_manifest(package_root: Path) -> dict:
     return manifest
 
 
+def release_snapshot(package_root: Path) -> tuple[dict, dict[str, bytes]]:
+    manifest = load_release_manifest(package_root)
+    excluded = set(manifest.get("exclude_content_roots", []))
+    files = {}
+    for entry in manifest["include"]:
+        key, source = _safe_release_file(package_root, entry, excluded)
+        if key in files:
+            raise ValueError(f"发行清单存在重复文件: {entry}")
+        files[key] = _read_regular_file(source, f"发行清单文件 {entry}")
+    return manifest, files
+
+
 def release_files(package_root: Path, manifest: dict) -> dict[str, str]:
     excluded = set(manifest.get("exclude_content_roots", []))
     files = {}
     for entry in manifest["include"]:
-        relative = Path(entry)
-        if not isinstance(entry, str) or relative.is_absolute() or ".." in relative.parts:
-            raise ValueError(f"发行清单包含非法路径: {entry}")
-        if relative.parts and relative.parts[0] in excluded:
-            raise ValueError(f"发行清单不得包含内容根目录: {entry}")
-        key = relative.as_posix()
+        key, source = _safe_release_file(package_root, entry, excluded)
         if key in files:
             raise ValueError(f"发行清单存在重复文件: {entry}")
-        source = package_root / relative
-        if not source.is_file():
-            raise ValueError(f"发行清单文件不存在: {entry}")
-        files[key] = sha256(source)
+        files[key] = hashlib.sha256(_read_regular_file(source, f"发行清单文件 {entry}")).hexdigest()
     return files
 
 
-def release_descriptor(package_root: Path) -> dict:
-    manifest = load_release_manifest(package_root)
+def release_descriptor_from_snapshot(manifest: dict, files: dict[str, bytes]) -> dict:
     descriptor = {
         "format": manifest["format"],
         "version": manifest["version"],
-        "files": release_files(package_root, manifest),
+        "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()},
         "content_excluded": manifest.get("exclude_content_roots", []),
     }
     encoded = json.dumps(descriptor, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     descriptor["release_id"] = hashlib.sha256(encoded).hexdigest()
     return descriptor
+
+
+def release_descriptor(package_root: Path) -> dict:
+    manifest, files = release_snapshot(package_root)
+    return release_descriptor_from_snapshot(manifest, files)
