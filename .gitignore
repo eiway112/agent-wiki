@@ -1,5 +1,6 @@
 # IDE / 临时产物
 .qoder/
+.qoderignore
 .tmp/
 __pycache__/
 *.pyc
