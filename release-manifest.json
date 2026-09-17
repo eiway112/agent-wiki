@@ -3,6 +3,7 @@
   "version": "1.1.0",
   "include": [
     "SKILL.md",
+    "LICENSE.md",
     "release-manifest.json",
     "scripts/build_release.py",
     "scripts/init_instance.py",
