@@ -1,8 +1,10 @@
-# Agent Wiki — 智能体知识库运营工作流
-
-把外部知识转化为智能体运行时可调用的行为规则（Memory/规范/Skill）的完整方法论，以 Qoder Agent Skill 形式交付。灵感来自 Andrej Karpathy 的 LLM Wiki 设计，经 26+ 条真实入库记录验证。
-
-**知识库不是收藏夹，是智能体的能力增长引擎。**
+# Agent Wiki — 智能体知识库运营工作流 
+**知识库不是收藏夹，是智能体的能力增长引擎。** 
+平台无关的知识运营方法论：把外部知识转化为智能体运行时可调用的行为规则
+（Memory/规范/Skill），以 Agent Skill（SKILL.md）形式交付，首个验证平台为 Qoder。
+每条入库知识的价值判据唯一：能否改变智能体在具体场景下的行为决策。 
+- 方法论：三层架构 × Ingest/Query/Lint 三操作 × Planner/Generator/Evaluator 角色分离
+- 机器验证：零依赖治具 `scripts/validate.py` 覆盖 Lint 结构层十一维，`examples/` 为开箱即跑的回归基线
 
 ## 核心机制
 
@@ -21,9 +23,13 @@
 
 ## 快速开始
 
-1. 将 `SKILL.md` 复制到你的 Qoder 技能目录：
-   - 个人级：`~/.qoder/skills/agent-wiki/SKILL.md`
-   - 项目级：`<项目>/.qoder/skills/agent-wiki/SKILL.md`
+1. 将 `SKILL.md` 放入你的智能体平台技能目录（SKILL.md 为跨平台交付格式，非 Qoder 私有语法）：    
+| 平台 | 安装位置 |   
+|---|---|   
+| Qoder（已验证） | 个人级 `~/.qoder/skills/agent-wiki/SKILL.md`；项目级 `<项目>/.qoder/skills/agent-wiki/SKILL.md` |   
+| 其他有技能目录概念的平台 | 按该平台约定放入对应技能目录 |   
+| 无技能目录概念的平台 | 将 `SKILL.md` 作为系统提示/项目规范文件载入，按三层架构落地，目录名可本地化（SKILL.md:15） |
+
 2. 初始化知识库目录结构：
 
 ```
