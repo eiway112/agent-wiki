@@ -75,7 +75,7 @@ python scripts/validate.py examples
 agent-wiki/
 ├── SKILL.md              ← 技能主体（复制到技能目录即用）
 ├── README.md
-├── LICENSE               ← MIT
+├── LICENSE.md            ← MIT
 ├── references/
 │   └── rule-template.md  ← 蒸馏产物模板（三出口标准形态）
 ├── scripts/
@@ -97,4 +97,4 @@ agent-wiki/
 
 ## License
 
-MIT — 见 [LICENSE](LICENSE)。
+MIT — 见 [LICENSE.md](LICENSE.md)。
