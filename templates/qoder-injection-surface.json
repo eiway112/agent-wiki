@@ -1,0 +1,29 @@
+{
+  "required_read_paths": [],
+  "surfaces": [
+    {
+      "kind": "memory_dir",
+      "scope": "user",
+      "path": "<QODER_USER_MEMORY_DIR>"
+    },
+    {
+      "kind": "memory_index",
+      "scope": "user",
+      "path": "<QODER_USER_MEMORY_DIR>/MEMORY.md"
+    },
+    {
+      "kind": "memory_dir",
+      "scope": "project",
+      "path": "<QODER_PROJECT_MEMORY_DIR>"
+    },
+    {
+      "kind": "memory_index",
+      "scope": "project",
+      "path": "<QODER_PROJECT_MEMORY_DIR>/MEMORY.md"
+    }
+  ],
+  "hot_layer_cap": {
+    "user": 40,
+    "project": 30
+  }
+}

@@ -17,7 +17,7 @@
 - **质量过滤器与标记上限**：排他性/生成力两问滤掉常识规则，决定三色标记上限；**适用边界**为 🟢/🟡 必填字段——语义要求下沉为结构特征，治具裁定
 - **矛盾处理协议**：时间性演化/领域性差异/本质性张力三型处理，禁止悄悄覆盖
 - **蒸馏卡与基线回归**：`references/rule-template.md` 统一三出口形态，examples 基线卡作为方法论迭代的回归基线
-- **记忆分层与注入面抽象**：热层（常驻索引）/温层（按需）/冷层（tombstone）三层；落地载体由实例的 `注入面.json` 自描述，技能不硬编码任何平台路径/用户名。蒸馏卡「落地指针」（`memory:`/`file:`/`none`）按判定阶梯 `INVALID<ORPHANED<NONE<WARM<HOT` 机验「状态↔载体↔台账」一致；维度 8/9 采用门控生效，注入面不可达记 `UNVERIFIED`（🟢 降 WARN）、`auto_injection=false` 封顶 `WARM`——把真实能力边界诚实标注，而非假装修复
+- **记忆分层与注入面抽象**：热层（常驻索引）/温层（按需）/冷层（tombstone）三层；落地载体由实例的 `注入面.json` 自描述，技能不硬编码任何平台路径/用户名。蒸馏卡「落地指针」（`memory:`/`file:`/`none`）按判定阶梯 `INVALID<ORPHANED<NONE<DOC<WARM<HOT` 机验「状态↔载体↔台账」一致；维度 8/9 采用门控生效，注入面不可达记 `UNVERIFIED`（🟢 降 WARN）、`auto_injection=false` 封顶 `WARM`——把真实能力边界诚实标注，而非假装修复
 - **采集引擎抽象**：AutoCLI / WebFetch / 公开 API / 手动粘贴可互换，入库后要求完全一致
 - **Harness 递减**：治具规则随模型进步单调递减，删掉不再产生真实信号的规则；新增机制同样受递减约束
 
@@ -46,6 +46,12 @@ python scripts/validate.py examples
 ```
 
 4. 开始第一次 Ingest：让智能体按 SKILL.md 的 8 步清单执行，或参照 `examples/` 中的样本文件。
+
+## 发行与实例锁
+
+本仓是唯一可分发的 `agent-wiki` 源。`release-manifest.json` 的显式 `include` 清单是发行身份的唯一输入；`scripts/build_release.py` 只复制清单文件并生成带 `release_id` 的 `release.json`，拒绝内容根目录进入发行包。
+
+实例仅保留其配置、策略副本和 `程序文件/配置/agent-wiki-release.lock.json`。运行 `python scripts/validate_release_lock.py --instance <实例 manifest>` 会核验发行身份、实例策略哈希及源策略字节一致性；该路径只读取发行清单列出的文件和实例配置，绝不枚举或读取实例的 `原始采集/`、`知识库/`。
 
 ## Evaluator 示例（scripts/validate.py）
 

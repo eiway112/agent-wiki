@@ -505,6 +505,34 @@ class AdoptedFixtureCase(FixtureCase):
         self.assertIn("目录台账一致性", out)
         self.assertIn("但台账中不存在", out)
 
+    def test_d8_required_read_file_is_warm(self):
+        required = self.root / "程序文件" / "必读规范.md"
+        required.write_text("# 必读\n", encoding="utf-8")
+        self.surface["required_read_paths"] = [required.as_posix()]
+        self.write_surface(self.surface)
+        self.write(self.card_rel, ADOPTED_CARD.replace(
+            "memory:feedback-fix.md", f"file:{required.as_posix()}"))
+        rc, out = run_validator(self.root, "--refresh-landing-ledger")
+        self.assertEqual(0, rc, out)
+        self.assertIn("verdict=WARM", self.read_ledger())
+        self.assertIn("layer=必读面", self.read_ledger())
+
+    def test_d8_unlisted_file_is_doc_and_caps_green(self):
+        document = self.root / "知识库" / "说明.md"
+        document.write_text("# 说明\n", encoding="utf-8")
+        yellow_card = ADOPTED_CARD.replace("🟢", "🟡").replace(
+            "memory:feedback-fix.md", f"file:{document.as_posix()}")
+        self.write(self.card_rel, yellow_card)
+        rc, out = run_validator(self.root, "--refresh-landing-ledger")
+        self.assertEqual(0, rc, out)
+        self.assertIn("verdict=DOC", self.read_ledger())
+        self.assertIn("layer=翻阅面", self.read_ledger())
+
+        self.write(self.card_rel, yellow_card.replace("🟡", "🟢"))
+        rc, out = run_validator(self.root)
+        self.assertEqual(1, rc, out)
+        self.assertIn("最强 file: 载体仍为翻阅面文档", out)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

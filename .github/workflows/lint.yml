@@ -29,3 +29,6 @@ jobs:
       # 冒烟：直接跑一次报告，确保 CLI 退出码契约（0=PASS）未漂移
       - name: examples 判定应 PASS
         run: python scripts/validate.py examples
+
+      - name: 发行包与实例锁回归
+        run: python tests/test_portable_instance.py

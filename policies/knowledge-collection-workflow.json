@@ -1,0 +1,26 @@
+{
+  "format": "agent-wiki-policy/v1",
+  "id": "knowledge-collection-workflow",
+  "version": "1.0.0",
+  "extends": "core",
+  "description": "知识库采集工作流实例的完整治理策略；保留现有全部结构层检查。",
+  "cross_file_dimensions": [8, 9, 11, 12, 13, 14, 16, 17],
+  "required_capabilities": {
+    "persistent_memory": true,
+    "independent_evaluator": true,
+    "git": true
+  },
+  "optional_capabilities": {
+    "auto_injection": true,
+    "task_interception": ["automatic", "enforced_manual"]
+  },
+  "instance_config": {
+    "source_allowlist": "程序文件/配置/来源白名单.json",
+    "injection_surface": "程序文件/配置/注入面.json",
+    "backup": {
+      "bundle_directory": "<INSTANCE_SPECIFIC>",
+      "max_lag_commits": 20
+    },
+    "pending_ttl_schema": "项目规范.md"
+  }
+}

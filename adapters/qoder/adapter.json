@@ -1,0 +1,13 @@
+{
+  "format": "agent-wiki-adapter/v1",
+  "id": "qoder",
+  "version": "1.0.0",
+  "capabilities": {
+    "persistent_memory": true,
+    "auto_injection": true,
+    "task_interception": "enforced_manual",
+    "independent_evaluator": true,
+    "git": true
+  },
+  "injection_surface_template": "templates/qoder-injection-surface.json"
+}

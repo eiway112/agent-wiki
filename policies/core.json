@@ -1,0 +1,19 @@
+{
+  "format": "agent-wiki-policy/v1",
+  "id": "core",
+  "version": "1.0.0",
+  "description": "跨平台知识库的通用结构门禁。",
+  "cross_file_dimensions": [8, 9, 16, 17],
+  "required_capabilities": {
+    "persistent_memory": true,
+    "independent_evaluator": true
+  },
+  "optional_capabilities": {
+    "auto_injection": true,
+    "task_interception": ["automatic", "enforced_manual"]
+  },
+  "instance_config": {
+    "source_allowlist": "程序文件/配置/来源白名单.json",
+    "injection_surface": "程序文件/配置/注入面.json"
+  }
+}

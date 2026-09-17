@@ -1,0 +1,25 @@
+{
+  "format": "agent-wiki-release/v1",
+  "version": "1.1.0",
+  "include": [
+    "SKILL.md",
+    "release-manifest.json",
+    "scripts/build_release.py",
+    "scripts/init_instance.py",
+    "scripts/release_contract.py",
+    "scripts/validate.py",
+    "scripts/validate_release_lock.py",
+    "policies/core.json",
+    "policies/knowledge-collection-workflow.json",
+    "adapters/qoder/adapter.json",
+    "templates/instance-manifest.json",
+    "templates/qoder-injection-surface.json",
+    "templates/rule-template.md"
+  ],
+  "exclude_content_roots": [
+    "原始采集",
+    "知识库",
+    ".qoder",
+    "memory"
+  ]
+}

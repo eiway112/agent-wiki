@@ -80,7 +80,7 @@ CARD_PREFIX = "蒸馏卡_"
 CARD_REQUIRED_SECTIONS = ("适用边界", "来源指针")
 POINTER_LINE_RE = re.compile(r"^-\s*落地指针:\s*(.+?)\s*$", re.M)
 CARD_STATUS_RE = re.compile(r"^-\s*落地状态:\s*(🟢|🟡|🔵)", re.M)
-VERDICT_RANK = {"INVALID": 0, "ORPHANED": 1, "NONE": 2, "WARM": 3, "HOT": 4}
+VERDICT_RANK = {"INVALID": 0, "ORPHANED": 1, "NONE": 2, "DOC": 3, "WARM": 4, "HOT": 5}
 MACHINE_BLOCK_RE = re.compile(
     r"<!-- MACHINE-READABLE BEGIN -->(.*?)<!-- MACHINE-READABLE END -->", re.S)
 
@@ -238,9 +238,12 @@ def resolve_pointer(token: str, surfaces: dict):
                 return "WARM", "按需", f"{name} 存在但未被索引引用"
         return "ORPHANED", "-", f"所有 memory_dir 中均无 {name}"
     if token.startswith("file:"):
-        path = token[len("file:"):].split("#", 1)[0]
-        if Path(path).is_file():
-            return "WARM", "按需", f"{path} 存在"
+        path = Path(token[len("file:"):].split("#", 1)[0])
+        if path.is_file():
+            required_read_paths = {Path(p).resolve() for p in surfaces.get("required_read_paths", [])}
+            if path.resolve() in required_read_paths:
+                return "WARM", "必读面", f"{path} 存在且位于 required_read_paths"
+            return "DOC", "翻阅面", f"{path} 存在（翻阅面文档，须主动读取才生效）"
         return "ORPHANED", "-", f"{path} 不存在"
     return "INVALID", "-", f"无法识别的指针语法: {token}"
 
@@ -310,7 +313,7 @@ def refresh_landing_ledger(root: Path) -> str:
         "> 本文件由 validate.py 生成，禁止手编（手编即制造第二份漂移副本）。",
         "> 刷新命令: python scripts/validate.py <知识库根目录> --refresh-landing-ledger",
         "> 列义: 判定=该卡所有落地指针中最弱一档（保守口径，供台账↔实况漂移检测）；注入层级=最强指针所处实际生效层（常驻=热层/按需=温层）。二者取自同一组指针的不同聚合，故可并存（如判定 WARM、层级 常驻 = 一个指针仅温层、另一个已入热层）。",
-        "> 判定档位由弱到强: INVALID(语法无效) < ORPHANED(指针失效) < NONE(声明无载体) < WARM(载体存在未入热层索引) < HOT(载体存在且已入热层索引)；另有 MISSING_FIELD(缺落地指针字段)、UNVERIFIED(注入面不可达未解析)。",
+        "> 判定档位由弱到强: INVALID(语法无效) < ORPHANED(指针失效) < NONE(声明无载体) < DOC(翻阅面文档，须主动读取) < WARM(必读面或载体存在未入热层索引) < HOT(载体存在且已入热层索引)；另有 MISSING_FIELD(缺落地指针字段)、UNVERIFIED(注入面不可达未解析)。",
         f"- 生成时间: {datetime.now().isoformat(timespec='seconds')}",
         f"- 注入面可达: {'否（' + surf_skip + '）' if surf_skip else '是'}",
         f"- 孤儿指针数: {len(orphans)}",
@@ -392,9 +395,14 @@ def check_landing_consistency(root: Path, errors, warns, skip_reasons):
             max((resolve_pointer(t, surfaces) for t in row["pointers"]),
                 key=lambda v: VERDICT_RANK[v[0]])[0]]
         if row["status"] == "🟢" and resolved < VERDICT_RANK["WARM"]:
-            errors.append(
-                f"{rel}: 落地台账 — 标 🟢 但无存活落地载体（判定 {row['verdict']}）；"
-                f"{row['evidence']}；降级 🟡 并留 tombstone，或重建载体后刷新台账")
+            if row["verdict"] == "DOC":
+                errors.append(
+                    f"{rel}: 落地台账 — 标 🟢 但最强 file: 载体仍为翻阅面文档（判定 DOC）；"
+                    "降级 🟡，或仅在该文件真实位于运行时必读面时登记进 required_read_paths")
+            else:
+                errors.append(
+                    f"{rel}: 落地台账 — 标 🟢 但无存活落地载体（判定 {row['verdict']}）；"
+                    f"{row['evidence']}；降级 🟡 并留 tombstone，或重建载体后刷新台账")
         elif row["status"] == "🟢" and row["verdict"] == "ORPHANED":
             warns.append(
                 f"{rel}: 落地台账 — 🟢 含失效指针（另有存活载体）；{row['evidence']}；清理失效指针")

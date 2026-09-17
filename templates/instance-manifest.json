@@ -1,0 +1,28 @@
+{
+  "format": "agent-wiki-instance/v1",
+  "instance_id": "<GENERATE_UUID>",
+  "layout": {
+    "raw_sources": "原始采集",
+    "wiki": "知识库",
+    "config": "程序文件/配置",
+    "schema": "项目规范.md"
+  },
+  "policy": {
+    "id": "core",
+    "version": "1.0.0",
+    "path": "程序文件/配置/agent-wiki-policy.json",
+    "sha256": "<POLICY_SHA256>"
+  },
+  "adapter": {
+    "id": "<PLATFORM_ADAPTER_ID>",
+    "version": "1.0.0",
+    "config": "程序文件/配置/注入面.json"
+  },
+  "capabilities": {
+    "persistent_memory": false,
+    "auto_injection": false,
+    "task_interception": "manual_only",
+    "independent_evaluator": false,
+    "git": false
+  }
+}
