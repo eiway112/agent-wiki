@@ -139,6 +139,7 @@ description: 按 Karpathy LLM Wiki 模式运营智能体知识库：Ingest 采�
 
 - 注入面缺失/不可解析/载体不可达 → 指针记 `UNVERIFIED`，维度 8 记 `SKIP`，🟢 降 `WARN`，不报 `ERROR`。平台迁移会让载体消失，下次 commit 即暴露，而非让 🟢 静默生效。
 - `auto_injection=false`（平台无常驻注入能力）→ HOT 不可达，`memory` 指针封顶 `WARM`（按需）。**这是真实能力边界，技能层无法假装修复**；诚实标注为降级，不冒充热层。
+- 注入面缺 `platform_capability` 声明（迁移期旧实例）→ 保守按 `false` 封顶 `WARM` 并记 `WARN` 迁移提示（补声明或接受封顶）；不沉默高判，也不沉默封顶。
 
 ### 采用门控（声明决定义务）
 

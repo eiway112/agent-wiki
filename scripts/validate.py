@@ -38,7 +38,9 @@
     - 注入面路径不可达（平台迁移 / 占位符模板未填）→ 指针解析记 UNVERIFIED，
       维度记 SKIP，🟢 降 WARN「生效状态本次未核实」，不阻断提交；
     - platform_capability.auto_injection=false（平台无常驻注入能力）→ HOT 判定
-      不可达，memory 指针封顶 WARM，证据行注明这是能力边界而非缺陷。
+      不可达，memory 指针封顶 WARM，证据行注明这是能力边界而非缺陷；
+    - 注入面缺 platform_capability 声明（迁移期旧实例）→ 保守按 auto_injection=false
+      封顶 WARM，并记 WARN 迁移提示（补声明或接受封顶），不沉默高判也不沉默封顶。
 
 落地指针语法（多指针以 "; " 分隔）:
     - 落地指针: memory:<文件名>        → 在注入面声明的 memory_dir 中解析；
@@ -222,7 +224,14 @@ def resolve_pointer(token: str, surfaces: dict):
     """解析单个指针，返回 (判定, 注入层级, 证据)。"""
     if token == "none":
         return "NONE", "-", "声明无载体"
-    auto_inject = surfaces.get("platform_capability", {}).get("auto_injection", True)
+    capability = surfaces.get("platform_capability")
+    if isinstance(capability, dict) and capability.get("auto_injection", False):
+        auto_inject, cap_note = True, None
+    elif isinstance(capability, dict):
+        auto_inject, cap_note = False, "平台无常驻注入能力（auto_injection=false）"
+    else:
+        # 缺声明保守按 false：静默高判 HOT 比保守封顶危害大（诚实降级语义）
+        auto_inject, cap_note = False, "注入面未声明 platform_capability，保守按无常驻注入能力"
     if token.startswith("memory:"):
         name = token[len("memory:"):]
         if not name or "/" in name or "\\" in name:
@@ -238,8 +247,8 @@ def resolve_pointer(token: str, surfaces: dict):
                     if ip.is_file() and name in ip.read_text(encoding="utf-8"):
                         if not auto_inject:
                             return "WARM", "按需", (
-                                f"{name} 存在且被索引引用，但平台无常驻注入能力"
-                                "（auto_injection=false），封顶温层——能力边界非缺陷")
+                                f"{name} 存在且被索引引用，但{cap_note}，"
+                                "封顶温层——能力边界非缺陷")
                         return "HOT", "常驻", f"{name} 存在且被索引引用"
                 return "WARM", "按需", f"{name} 存在但未被索引引用"
         return "ORPHANED", "-", f"所有 memory_dir 中均无 {name}"
@@ -741,6 +750,15 @@ def main():
             print(f"  [ERROR] {WIKI_DIR}/{LEDGER_NAME}: 安全写入被拒绝 — {exc}", file=out)
             return 1
         print(f"  [WRITE] {WIKI_DIR}/{LEDGER_NAME} 已重新生成", file=out)
+
+    # 迁移期旧实例的注入面可能缺 platform_capability 声明：缺声明已保守按 false
+    # 封顶 WARM（见 resolve_pointer），此处补 WARN 迁移提示——不沉默高判，也不沉默封顶。
+    if (root / SURFACES_REL).exists():
+        declared, _declared_skip = load_surfaces(root)
+        if isinstance(declared, dict) and "platform_capability" not in declared:
+            warns.append(
+                f"{SURFACES_REL.as_posix()}: 注入面 — 缺 platform_capability 声明（迁移提示）："
+                "保守按 auto_injection=false 封顶 WARM；补适配器声明或接受封顶")
 
     # 维度 8/9 采用门控：注入面.json 存在 OR 任一蒸馏卡含「- 落地指针:」字段才生效——
     # 防跨平台假抽象（无落地指针约定的库不应被强判指针一致性 ERROR）。

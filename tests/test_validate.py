@@ -522,6 +522,25 @@ class AdoptedFixtureCase(FixtureCase):
         self.assertEqual(0, rc, f"封顶温层不应失败：\n{out}")
         self.assertIn("按需", self.read_ledger())
 
+    def test_d8_missing_platform_capability_caps_warm_with_migration_hint(self):
+        # 迁移期旧实例无 platform_capability 声明：保守封顶 WARM＋WARN 迁移提示，
+        # 既不静默高判 HOT，也不沉默封顶
+        del self.surface["platform_capability"]
+        self.write_surface(self.surface)
+        rc, out = run_validator(self.root, "--refresh-landing-ledger")
+        self.assertEqual(0, rc, out)
+        self.assertIn("verdict=WARM", self.read_ledger())
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, f"缺声明保守封顶不应失败：\n{out}")
+        self.assertIn("[WARN]", out)
+        self.assertIn("缺 platform_capability 声明", out)
+
+    def test_d8_platform_capability_present_silences_migration_hint(self):
+        # 负向守卫：声明存在时迁移提示不得出现，否则提示恒在、失去迁移指引力
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertNotIn("缺 platform_capability 声明", out)
+
     def test_d8_unreachable_surface_degrades_to_warn(self):
         # 注入面声明的 memory_dir 不可达（平台迁移）：UNVERIFIED + WARN，不得假 ERROR
         self.surface["surfaces"][0]["path"] = (self.root / "程序文件" / "记忆" / "gone").as_posix()
