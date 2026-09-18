@@ -2,6 +2,7 @@ import getpass
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -141,6 +142,43 @@ class PortableInstanceTest(unittest.TestCase):
                                 capture_output=True, text=True, encoding="utf-8", env=ENV)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((sentinel / "release.json").exists())
+
+    def test_lock_passes_after_package_path_change(self):
+        # F1 回归：异机/异路径携带实例只要 release_id 相同须 PASS；
+        # 旧判据把锁绑死 init 时包路径，携带实例在此必败
+        release_a = self.base / "release-a"
+        build = subprocess.run(["python", str(BUILD), "--output", str(release_a)],
+                               capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertEqual(build.returncode, 0, build.stderr)
+        instance = self.base / "carried-instance"
+        initialize = self.initialize(release_a / "scripts" / "init_instance.py", instance)
+        self.assertEqual(initialize.returncode, 0, initialize.stderr)
+        release_b = self.base / "release-b"
+        shutil.copytree(release_a, release_b)
+        manifest = instance / "程序文件" / "配置" / "agent-wiki-instance.json"
+        lock = self.lock_check(release_b / "scripts" / "validate_release_lock.py", manifest)
+        self.assertEqual(lock.returncode, 0, lock.stderr)
+
+    def test_old_lock_with_source_path_is_tolerated_with_migration_note(self):
+        self.assertEqual(self.initialize().returncode, 0)
+        lock_path = self.root / "程序文件" / "配置" / "agent-wiki-release.lock.json"
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+        data["source_path"] = "/old/machine/package"
+        lock_path.write_text(json.dumps(data), encoding="utf-8")
+        result = self.lock_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(any("source_path" in n for n in report["migration_notes"]))
+        text = subprocess.run(
+            ["python", str(LOCK_VALIDATE), "--instance", str(self.manifest_path)],
+            capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertIn("[MIGRATION]", text.stdout)
+
+    def test_new_lock_carries_no_source_path(self):
+        self.assertEqual(self.initialize().returncode, 0)
+        lock = json.loads(
+            (self.root / "程序文件" / "配置" / "agent-wiki-release.lock.json").read_text(encoding="utf-8"))
+        self.assertEqual({"format", "release_id"}, set(lock))
 
     def test_lock_survives_source_checkout_eol_change(self):
         # 跨机模拟：实例在 CRLF 形态的源仓检出下初始化，校验发生在同内容 LF 形态检出下；零内容漂移须 PASS

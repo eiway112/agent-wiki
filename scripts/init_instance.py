@@ -99,7 +99,6 @@ def main():
     lock_path = config_dir / "agent-wiki-release.lock.json"
     write_json(lock_path, {
         "format": "agent-wiki-release-lock/v1",
-        "source_path": str(PACKAGE_ROOT),
         "release_id": release["release_id"],
     })
     manifest = {

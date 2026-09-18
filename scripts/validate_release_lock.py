@@ -54,18 +54,18 @@ def validate(instance_path: Path) -> dict:
     distribution = manifest.get("distribution")
     if not isinstance(distribution, dict):
         raise ValueError("实例 manifest 缺少 distribution")
-    source = distribution.get("source")
-    if not isinstance(source, str) or Path(source).resolve() != PACKAGE_ROOT:
-        raise ValueError("实例 distribution.source 与执行的发行源不一致")
     lock_path = relative_path(root, distribution.get("lock"), "distribution.lock")
     lock = load_json(lock_path, "发行锁")
     release = release_descriptor(PACKAGE_ROOT)
-    if lock != {
-        "format": "agent-wiki-release-lock/v1",
-        "source_path": str(PACKAGE_ROOT),
-        "release_id": release["release_id"],
-    }:
+    if lock.get("format") != "agent-wiki-release-lock/v1":
+        raise ValueError("不支持的发行锁格式")
+    if lock.get("release_id") != release["release_id"]:
         raise ValueError("发行锁与源仓发行身份不一致")
+    migration_notes = []
+    if "source_path" in lock:
+        migration_notes.append(
+            "发行锁仍带 source_path（旧格式机器局部键，已不参与校验）："
+            "建议手工删除该键或重建实例")
 
     policy_info = manifest.get("policy")
     if not isinstance(policy_info, dict):
@@ -79,8 +79,10 @@ def validate(instance_path: Path) -> dict:
     policy_id = policy_info.get("id")
     if policy.get("id") != policy_id or policy.get("version") != policy_info.get("version"):
         raise ValueError("策略身份与实例 manifest 不一致")
-    source_policy = PACKAGE_ROOT / "policies" / f"{policy_id}.json"
-    if not source_policy.is_file() or canonical_bytes(source_policy.read_bytes()) != policy_bytes:
+    policy_rel = f"policies/{policy_id}.json"
+    if policy_rel not in release["files"]:
+        raise ValueError(f"实例策略不在发行清单内: {policy_rel}")
+    if release["files"][policy_rel] != policy_hash:
         raise ValueError("实例策略与发行源策略不一致")
 
     return {
@@ -91,8 +93,9 @@ def validate(instance_path: Path) -> dict:
             "instance manifest",
             "release lock",
             "instance policy",
-            "source policy",
+            "release files map",
         ],
+        "migration_notes": migration_notes,
         "content_roots_read": [],
     }
 
@@ -114,6 +117,8 @@ def main() -> int:
         print(json.dumps(report, ensure_ascii=False))
     else:
         print(f"PASS: {report['release_id']}")
+        for note in report["migration_notes"]:
+            print(f"  [MIGRATION] {note}")
     return 0
 
 
