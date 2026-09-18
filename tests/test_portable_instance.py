@@ -1,3 +1,4 @@
+import getpass
 import json
 import os
 import re
@@ -9,7 +10,7 @@ from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT / "scripts"))
-from release_contract import release_descriptor  # noqa: E402
+from release_contract import portability_violations, release_descriptor, release_snapshot  # noqa: E402
 ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 INIT = PACKAGE_ROOT / "scripts" / "init_instance.py"
 BUILD = PACKAGE_ROOT / "scripts" / "build_release.py"
@@ -155,6 +156,70 @@ class PortableInstanceTest(unittest.TestCase):
         manifest = instance / "程序文件" / "配置" / "agent-wiki-instance.json"
         lock = self.lock_check(release / "scripts" / "validate_release_lock.py", manifest)
         self.assertEqual(lock.returncode, 0, lock.stderr)
+
+
+class PackagePortabilityGuardTest(unittest.TestCase):
+    """随包文件混入机器局部指向即构建被拒：跨平台/异机/异用户宣称须有机检兜底，不靠人记得扫。
+
+    负向注入取两层：守卫函数逐类探针须命中（防空跑）；整包复制后污染副本、
+    跑副本自带构建器须拒绝（build_release 的 PACKAGE_ROOT 恒为自身所在包，
+    对假包注入不走构建路径，属测试缺陷而非守卫缺陷）。
+    """
+
+    def setUp(self):
+        fixture_root = PACKAGE_ROOT / ".tmp" / "portability-guard-fixtures"
+        fixture_root.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=fixture_root)
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name)
+        self.include = json.loads(
+            (PACKAGE_ROOT / "release-manifest.json").read_text(encoding="utf-8"))["include"]
+
+    def copied_package(self) -> Path:
+        package = self.base / "package"
+        for rel in self.include:
+            target = package / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((PACKAGE_ROOT / rel).read_bytes())
+        return package
+
+    def test_current_package_has_no_machine_local_pointer(self):
+        _, files = release_snapshot(PACKAGE_ROOT)
+        self.assertEqual([], portability_violations(files))
+
+    def test_violations_flag_each_machine_local_pattern(self):
+        # 负向注入：逐类探针须命中，否则守卫空跑
+        cases = {
+            "盘符路径": b"# t\nsee C:\\Users\\x\\notes\n",
+            "macOS 用户主目录": b"# t\nsee /Users/alice/x\n",
+            "POSIX 用户主目录": b"# t\nsee /home/bob/y\n",
+        }
+        for label, payload in cases.items():
+            with self.subTest(label=label):
+                hits = portability_violations({"payload.md": payload})
+                self.assertEqual([f"payload.md: {label}"], hits)
+
+    def test_violations_flag_current_username(self):
+        user = getpass.getuser()
+        if len(user) < 3:
+            self.skipTest("当前用户名过短，探针不启用")
+        hits = portability_violations({"payload.md": f"# t\nowner: {user}\n".encode("utf-8")})
+        self.assertEqual(["payload.md: 当前用户名"], hits)
+
+    def test_violations_ignore_protocol_prefix(self):
+        # 负向守卫：http(s):// 等合法内容不得误伤，否则盘符判据过宽、构建不可用
+        self.assertEqual([], portability_violations({"payload.md": b"# t\n<https://example.org/a>\n"}))
+
+    def test_build_refuses_tainted_package_copy(self):
+        package = self.copied_package()
+        skill = package / "SKILL.md"
+        skill.write_bytes(skill.read_bytes() + b"\nsee C:\\Users\\x\\notes\n")
+        result = subprocess.run(
+            ["python", str(package / "scripts" / "build_release.py"), "--output", str(self.base / "out")],
+            capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("机器局部指向", result.stderr)
+        self.assertFalse((self.base / "out" / "release.json").exists())
 
 
 class ReleaseManifestSelfConsistencyTest(unittest.TestCase):

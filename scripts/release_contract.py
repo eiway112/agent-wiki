@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+import getpass
 import hashlib
 import json
 import os
+import re
 import stat
 from pathlib import Path
 
@@ -103,3 +105,28 @@ def release_descriptor_from_snapshot(manifest: dict, files: dict[str, bytes]) ->
 def release_descriptor(package_root: Path) -> dict:
     manifest, files = release_snapshot(package_root)
     return release_descriptor_from_snapshot(manifest, files)
+
+
+# 机器局部指向一旦随包发行，「跨平台/异机/异用户」宣称即假；盘符 lookbehind 排除
+# http:// 等协议前缀（冒号前字母的前驱为字母数字时不判）。
+# 主目录两探针以拼接拆开连续字面量：本文件自身随包发行，字面量连续即自命中。
+_PORTABILITY_PATTERNS = (
+    (re.compile(rb"(?<![A-Za-z0-9])[A-Za-z]:[\\/]"), "盘符路径"),
+    (re.compile(rb"/" + rb"Users/[^/\s]"), "macOS 用户主目录"),
+    (re.compile(rb"/" + rb"home/[^/\s]"), "POSIX 用户主目录"),
+)
+
+
+def portability_violations(files: dict[str, bytes]) -> list[str]:
+    """扫随包文件内容，返回机器局部指向命中列表；空列表 = 可移植。"""
+    probes = list(_PORTABILITY_PATTERNS)
+    user = getpass.getuser()
+    if len(user) >= 3:
+        probes.append((re.compile(re.escape(user.encode("utf-8"))), "当前用户名"))
+    violations = []
+    for name in sorted(files):
+        content = files[name]
+        for pattern, label in probes:
+            if pattern.search(content):
+                violations.append(f"{name}: {label}")
+    return violations

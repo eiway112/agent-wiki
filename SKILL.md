@@ -13,6 +13,7 @@ description: 按 Karpathy LLM Wiki 模式运营智能体知识库：Ingest 采�
 
 - 若项目已有自己的知识库规范文件（如 `项目规范.md`），以该文件为权威参照，冲突时以项目规范为准
 - 在不同平台/项目应用时，按本 Skill 的三层架构与流程落地，目录名可本地化；本仓 `examples/` 提供可直接跑通的最小样本
+- 运行环境下限：Python ≥3.9；本仓全部脚本（治具/初始化器/发行构建）仅用标准库，零第三方依赖
 - 本方法论当前蒸馏对象为命题知识（规则）；蒸馏卡模板的「认知结构扩展」可选区为认知结构蒸馏（心智模型/决策启发式层）预留接口，需要时再启用，不预建管线
 
 ## 三层架构
@@ -114,7 +115,7 @@ description: 按 Karpathy LLM Wiki 模式运营智能体知识库：Ingest 采�
 承担者自描述文件——技能不假设任何平台路径，热层/温层的真实载体由实例自行声明：
 
 - `surfaces[]`：`kind=memory_dir`（存在性解析）/ `memory_index`（判定是否常驻热层）+ `scope` + `path`（绝对路径）
-- `platform_capability.auto_injection`：该平台能否把热层索引常驻注入上下文（`true`→HOT 可达；`false`→封顶温层）
+- `platform_capability.auto_injection`：该平台能否把热层索引常驻注入上下文（`true`→HOT 可达；`false`→封顶温层）；该节由初始化器自 `adapters/<适配器id>/adapter.json` 的 `capabilities` 写入，实例侧禁手编
 - `hot_layer_cap`：热层条目上限的**唯一机器可读源**（项目规范只引用不复制，避免手抄副本漂移）
 - `degradation`：降级语义说明
 

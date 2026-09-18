@@ -5,7 +5,7 @@ import os
 import stat
 from pathlib import Path
 
-from release_contract import release_descriptor_from_snapshot, release_snapshot
+from release_contract import portability_violations, release_descriptor_from_snapshot, release_snapshot
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,6 +53,9 @@ def main() -> int:
     try:
         _assert_plain_directory_chain(output.parent, "输出目录父路径")
         manifest, files = release_snapshot(PACKAGE_ROOT)
+        violations = portability_violations(files)
+        if violations:
+            raise ValueError("发行包含机器局部指向，拒绝构建: " + "; ".join(violations))
         output.mkdir()
         for entry, content in files.items():
             target = output / entry
