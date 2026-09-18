@@ -1,0 +1,13 @@
+{
+  "format": "agent-wiki-adapter/v1",
+  "id": "plain",
+  "version": "1.0.0",
+  "capabilities": {
+    "persistent_memory": true,
+    "auto_injection": false,
+    "task_interception": "manual_only",
+    "independent_evaluator": false,
+    "git": false
+  },
+  "injection_surface_template": "templates/plain-injection-surface.json"
+}

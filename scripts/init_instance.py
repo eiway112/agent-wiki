@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -29,8 +30,15 @@ def read_policy(policy_id: str) -> tuple[dict, bytes]:
         raise ValueError(f"策略不可读取: {exc}") from exc
 
 
+def available_adapters() -> list[str]:
+    root = PACKAGE_ROOT / "adapters"
+    if not root.is_dir():
+        return []
+    return sorted(p.name for p in root.iterdir() if (p / "adapter.json").is_file())
+
+
 def load_adapter(adapter_id: str) -> dict:
-    """适配器声明是 capabilities 的唯一机器来源：init 不硬编码任何平台能力字典。"""
+    """适配器声明是 capabilities 与注入面模板的唯一机器来源：init 不硬编码任何平台字典或面结构。"""
     path = PACKAGE_ROOT / "adapters" / adapter_id / "adapter.json"
     try:
         adapter = json.loads(path.read_text(encoding="utf-8"))
@@ -42,30 +50,47 @@ def load_adapter(adapter_id: str) -> dict:
         raise ValueError(f"适配器缺少 capabilities 声明: {adapter_id}")
     if not isinstance(adapter.get("version"), str) or not adapter["version"]:
         raise ValueError(f"适配器缺少版本号: {adapter_id}")
+    template = adapter.get("injection_surface_template")
+    if not isinstance(template, str) or not template:
+        raise ValueError(f"适配器缺少 injection_surface_template 声明: {adapter_id}")
     return adapter
 
 
-def qoder_surface(user_memory_dir: Path, project_memory_dir: Path, capabilities: dict) -> dict:
+def render_surface(adapter: dict, user_memory_dir: Path, project_memory_dir: Path) -> dict:
+    """按适配器模板渲染注入面：占位符以 JSON 转义形态替换，残留占位符即报错而非静默发行不可达面。"""
     if not user_memory_dir.is_dir() or not project_memory_dir.is_dir():
-        raise ValueError("Qoder user/project memory 目录必须已存在；初始化器不会创建平台记忆目录")
-    return {
-        "required_read_paths": [],
-        "surfaces": [
-            {"kind": "memory_dir", "scope": "user", "path": str(user_memory_dir.resolve())},
-            {"kind": "memory_index", "scope": "user", "path": str((user_memory_dir / "MEMORY.md").resolve())},
-            {"kind": "memory_dir", "scope": "project", "path": str(project_memory_dir.resolve())},
-            {"kind": "memory_index", "scope": "project", "path": str((project_memory_dir / "MEMORY.md").resolve())},
-        ],
-        "hot_layer_cap": {"user": 40, "project": 30},
-        "platform_capability": capabilities,
+        raise ValueError("user/project memory 目录必须已存在；初始化器不会创建平台记忆目录")
+    rel = Path(adapter["injection_surface_template"])
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ValueError(f"适配器模板路径非法: {rel}")
+    path = PACKAGE_ROOT / rel
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"适配器模板不可读取: {exc}") from exc
+    values = {
+        "<USER_MEMORY_DIR>": user_memory_dir.resolve(),
+        "<PROJECT_MEMORY_DIR>": project_memory_dir.resolve(),
     }
+    for placeholder, value in values.items():
+        text = text.replace(placeholder, json.dumps(str(value), ensure_ascii=False)[1:-1])
+    if re.search(r"<[A-Z_]+>", text):
+        raise ValueError("适配器模板存在未替换占位符")
+    try:
+        surface = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"适配器模板不是合法 JSON: {exc}") from exc
+    if not isinstance(surface, dict):
+        raise ValueError("适配器模板必须是 JSON 对象")
+    surface["platform_capability"] = adapter["capabilities"]
+    return surface
 
 
 def main():
     parser = argparse.ArgumentParser(description="初始化零内容 agent-wiki 实例")
     parser.add_argument("--root", type=Path, required=True, help="新的空实例根目录")
     parser.add_argument("--policy", default="core", choices=["core", "knowledge-collection-workflow"])
-    parser.add_argument("--adapter", default="qoder", choices=["qoder"])
+    parser.add_argument("--adapter", default="qoder", choices=available_adapters())
     parser.add_argument("--user-memory-dir", type=Path, required=True)
     parser.add_argument("--project-memory-dir", type=Path, required=True)
     parser.add_argument("--source-domain", action="append", required=True, help="允许采集的来源域名；可重复指定")
@@ -93,7 +118,7 @@ def main():
     policy_target = config_dir / "agent-wiki-policy.json"
     policy_target.write_bytes(policy_bytes)
     write_json(config_dir / "来源白名单.json", {"sources": [{"name": domain, "domains": [domain]} for domain in args.source_domain]})
-    write_json(config_dir / "注入面.json", qoder_surface(args.user_memory_dir, args.project_memory_dir, capabilities))
+    write_json(config_dir / "注入面.json", render_surface(adapter, args.user_memory_dir, args.project_memory_dir))
 
     release = release_descriptor(PACKAGE_ROOT)
     lock_path = config_dir / "agent-wiki-release.lock.json"

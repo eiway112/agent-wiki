@@ -34,9 +34,10 @@ class PortableInstanceTest(unittest.TestCase):
         (self.project_memory / "MEMORY.md").write_text("# project\n", encoding="utf-8")
         self.root = self.base / "instance"
 
-    def initialize(self, init=INIT, root=None):
+    def initialize(self, init=INIT, root=None, adapter="qoder"):
         return subprocess.run([
             "python", str(init), "--root", str(root or self.root), "--policy", "core",
+            "--adapter", adapter,
             "--user-memory-dir", str(self.user_memory),
             "--project-memory-dir", str(self.project_memory),
             "--source-domain", "example.org",
@@ -179,6 +180,54 @@ class PortableInstanceTest(unittest.TestCase):
         lock = json.loads(
             (self.root / "程序文件" / "配置" / "agent-wiki-release.lock.json").read_text(encoding="utf-8"))
         self.assertEqual({"format", "release_id"}, set(lock))
+
+    def test_init_plain_adapter_renders_template_and_capability(self):
+        root = self.base / "plain-instance"
+        result = self.initialize(root=root, adapter="plain")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        surface = json.loads(
+            (root / "程序文件" / "配置" / "注入面.json").read_text(encoding="utf-8"))
+        self.assertFalse(surface["platform_capability"]["auto_injection"])
+        paths = [s["path"] for s in surface["surfaces"]]
+        self.assertIn(str(self.user_memory.resolve()), paths)
+        for text in paths:
+            self.assertNotIn("<", text, "占位符残留即注入面不可达，不得静默发行")
+        manifest = json.loads(
+            (root / "程序文件" / "配置" / "agent-wiki-instance.json").read_text(encoding="utf-8"))
+        self.assertEqual("plain", manifest["adapter"]["id"])
+        self.assertEqual(manifest["capabilities"], surface["platform_capability"])
+
+    def test_plain_adapter_instance_caps_warm_end_to_end(self):
+        # F2 完整性：第二适配器 auto_injection=false → init 后治具把 memory 指针封顶
+        # WARM，证明适配器层真数据驱动、诚实降级通路端到端可达
+        from test_validate import ADOPTED_CARD, GOOD_INDEX, GOOD_LOG, GOOD_RAW_MD
+        root = self.base / "plain-instance"
+        initialize = self.initialize(root=root, adapter="plain")
+        self.assertEqual(initialize.returncode, 0, initialize.stderr)
+        config = root / "程序文件" / "配置"
+        (config / "来源白名单.json").write_text(
+            json.dumps({"sources": [{"name": "github", "domains": ["github.com"]}]}, ensure_ascii=False),
+            encoding="utf-8")
+        (root / "原始采集" / "文章" / "sample_good_20260630.md").write_text(GOOD_RAW_MD, encoding="utf-8")
+        (root / "知识库" / "蒸馏卡_fix_20260630.md").write_text(ADOPTED_CARD, encoding="utf-8")
+        (root / "知识库" / "目录.md").write_text(
+            GOOD_INDEX + "- [落地卡](蒸馏卡_fix_20260630.md)\n", encoding="utf-8")
+        (root / "知识库" / "操作日志.md").write_text(GOOD_LOG, encoding="utf-8")
+        (self.user_memory / "feedback-fix.md").write_text("# fix\n\n规则正文。\n", encoding="utf-8")
+        (self.user_memory / "MEMORY.md").write_text("- [fix](feedback-fix.md)\n", encoding="utf-8")
+        refresh = subprocess.run(
+            ["python", str(VALIDATE), str(root), "--refresh-landing-ledger"],
+            capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertEqual(refresh.returncode, 0, refresh.stderr + "\n" + refresh.stdout)
+        ledger = (root / "知识库" / "落地台账.md").read_text(encoding="utf-8")
+        self.assertIn("verdict=WARM", ledger)
+        self.assertIn("按需", ledger)
+        self.assertNotIn("verdict=HOT", ledger, "auto_injection=false 时 HOT 不可达，台账不得高判")
+
+    def test_unknown_adapter_rejected(self):
+        result = self.initialize(root=self.base / "x-instance", adapter="nosuch")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid choice", result.stderr)
 
     def test_lock_survives_source_checkout_eol_change(self):
         # 跨机模拟：实例在 CRLF 形态的源仓检出下初始化，校验发生在同内容 LF 形态检出下；零内容漂移须 PASS
@@ -328,6 +377,18 @@ class ReleaseManifestSelfConsistencyTest(unittest.TestCase):
         self.assertIn(
             "SKILL.md -> references/rule-template.md",
             self.unshipped_pointers(shrunk))
+
+    def test_all_adapter_files_shipped(self):
+        # 适配器或其模板漏列 include 即静默不发行：消费端按 SKILL.md 选适配器时声明即死引用
+        adapters_root = PACKAGE_ROOT / "adapters"
+        adapter_dirs = sorted(p for p in adapters_root.iterdir() if p.is_dir())
+        self.assertTrue(adapter_dirs)
+        for adapter_dir in adapter_dirs:
+            adapter_rel = f"adapters/{adapter_dir.name}/adapter.json"
+            self.assertIn(adapter_rel, self.include, f"{adapter_rel} 漏列即适配器静默不发行")
+            adapter = json.loads((PACKAGE_ROOT / adapter_rel).read_text(encoding="utf-8"))
+            template = adapter["injection_surface_template"]
+            self.assertIn(template, self.include, f"{template} 漏列即注入面模板静默不发行")
 
     def test_examples_tree_fully_shipped(self):
         # SKILL.md 宣称 examples/ 为可跑最小样本：全树漏列即静默不发行，宣称在包内即死引用
