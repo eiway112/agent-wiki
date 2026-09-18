@@ -14,6 +14,13 @@
     "policies/knowledge-collection-workflow.json",
     "adapters/qoder/adapter.json",
     "references/rule-template.md",
+    "examples/原始采集/文章/github_sample_llm_wiki_20260630.md",
+    "examples/知识库/目录.md",
+    "examples/知识库/操作日志.md",
+    "examples/知识库/落地台账.md",
+    "examples/知识库/蒸馏卡_llm_wiki_能力引擎_20260630.md",
+    "examples/程序文件/配置/来源白名单.json",
+    "examples/程序文件/配置/注入面.json",
     "templates/instance-manifest.json",
     "templates/qoder-injection-surface.json"
   ],

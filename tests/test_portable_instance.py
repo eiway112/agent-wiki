@@ -166,6 +166,7 @@ class ReleaseManifestSelfConsistencyTest(unittest.TestCase):
     def setUp(self):
         manifest = json.loads((PACKAGE_ROOT / "release-manifest.json").read_text(encoding="utf-8"))
         self.include = set(manifest["include"])
+        self.content_roots = set(manifest.get("exclude_content_roots", []))
 
     def unshipped_pointers(self, include):
         dead = []
@@ -177,8 +178,17 @@ class ReleaseManifestSelfConsistencyTest(unittest.TestCase):
                 token = (backtick or link).strip("./")
                 if not token or "{" in token:
                     continue
-                if (PACKAGE_ROOT / token).is_file() and token not in include:
-                    dead.append(f"{rel} -> {token}")
+                target = PACKAGE_ROOT / token
+                if target.is_file():
+                    if token not in include:
+                        dead.append(f"{rel} -> {token}")
+                elif target.is_dir():
+                    # 目录形自指：包内该目录须至少存在一个发行物，否则宣称即死引用；
+                    # 实例内容根是架构概念而非包内指针，豁免。
+                    if token in self.content_roots:
+                        continue
+                    if not any(i == token or i.startswith(token + "/") for i in include):
+                        dead.append(f"{rel} -> {token}/")
         return dead
 
     def test_release_contract_refuses_linked_source_file(self):
@@ -215,6 +225,18 @@ class ReleaseManifestSelfConsistencyTest(unittest.TestCase):
         self.assertIn(
             "SKILL.md -> references/rule-template.md",
             self.unshipped_pointers(shrunk))
+
+    def test_examples_tree_fully_shipped(self):
+        # SKILL.md 宣称 examples/ 为可跑最小样本：全树漏列即静默不发行，宣称在包内即死引用
+        shipped = {p.relative_to(PACKAGE_ROOT).as_posix()
+                   for p in (PACKAGE_ROOT / "examples").rglob("*") if p.is_file()}
+        self.assertTrue(shipped)
+        self.assertEqual(set(), shipped - self.include)
+
+    def test_guard_fails_on_dropped_examples_directory(self):
+        # 负向注入：摘光 examples/ 发行物，目录形自指须报死链，否则目录形判据为空跑
+        shrunk = {i for i in self.include if not i.startswith("examples/")}
+        self.assertIn("SKILL.md -> examples/", self.unshipped_pointers(shrunk))
 
 
 class ReleaseIdentityEolInvarianceTest(unittest.TestCase):
