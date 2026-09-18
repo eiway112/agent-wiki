@@ -141,6 +141,21 @@ class PortableInstanceTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((sentinel / "release.json").exists())
 
+    def test_lock_survives_source_checkout_eol_change(self):
+        # 跨机模拟：实例在 CRLF 形态的源仓检出下初始化，校验发生在同内容 LF 形态检出下；零内容漂移须 PASS
+        release = self.base / "release"
+        build = subprocess.run(["python", str(BUILD), "--output", str(release)], capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertEqual(build.returncode, 0, build.stderr)
+        policy = release / "policies" / "core.json"
+        policy.write_bytes(policy.read_bytes().replace(b"\n", b"\r\n"))
+        instance = self.base / "released-instance"
+        initialize = self.initialize(release / "scripts" / "init_instance.py", instance)
+        self.assertEqual(initialize.returncode, 0, initialize.stderr)
+        policy.write_bytes(policy.read_bytes().replace(b"\r\n", b"\n"))
+        manifest = instance / "程序文件" / "配置" / "agent-wiki-instance.json"
+        lock = self.lock_check(release / "scripts" / "validate_release_lock.py", manifest)
+        self.assertEqual(lock.returncode, 0, lock.stderr)
+
 
 class ReleaseManifestSelfConsistencyTest(unittest.TestCase):
     """发行清单是手工枚举的白名单：漏列即静默不发行，故须有机核守卫而非靠记得。"""
@@ -200,6 +215,38 @@ class ReleaseManifestSelfConsistencyTest(unittest.TestCase):
         self.assertIn(
             "SKILL.md -> references/rule-template.md",
             self.unshipped_pointers(shrunk))
+
+
+class ReleaseIdentityEolInvarianceTest(unittest.TestCase):
+    """release_id 须为提交内容的纯函数：同内容不同换行形态产出同一身份，否则跨机零内容漂移误报锁不一致。"""
+
+    def setUp(self):
+        fixture_root = PACKAGE_ROOT / ".tmp" / "release-contract-fixtures"
+        fixture_root.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=fixture_root)
+        self.addCleanup(temporary.cleanup)
+        self.package = Path(temporary.name) / "package"
+        self.package.mkdir()
+        (self.package / "release-manifest.json").write_text(
+            json.dumps({"format": "agent-wiki-release/v1", "version": "1", "include": ["payload.md"]}),
+            encoding="utf-8")
+
+    def descriptor_id(self, payload: bytes) -> str:
+        (self.package / "payload.md").write_bytes(payload)
+        return release_descriptor(self.package)["release_id"]
+
+    def test_release_id_invariant_across_line_endings(self):
+        lf = self.descriptor_id("# t\nline one\nline two\n".encode("utf-8"))
+        crlf = self.descriptor_id("# t\r\nline one\r\nline two\r\n".encode("utf-8"))
+        mixed = self.descriptor_id("# t\r\nline one\nline two\r\n".encode("utf-8"))
+        self.assertEqual(lf, crlf)
+        self.assertEqual(lf, mixed)
+
+    def test_release_id_still_tracks_content(self):
+        # 负向守卫：归一不得抹平真实内容差异，否则不变性恒真、测试空跑
+        base = self.descriptor_id("# t\nline one\n".encode("utf-8"))
+        changed = self.descriptor_id("# t\nline 1\n".encode("utf-8"))
+        self.assertNotEqual(base, changed)
 
 
 if __name__ == "__main__":

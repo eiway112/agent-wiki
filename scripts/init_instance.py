@@ -5,7 +5,7 @@ import json
 import uuid
 from pathlib import Path
 
-from release_contract import release_descriptor
+from release_contract import canonical_bytes, release_descriptor
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,7 +23,7 @@ def require_empty_root(root: Path):
 def read_policy(policy_id: str) -> tuple[dict, bytes]:
     path = PACKAGE_ROOT / "policies" / f"{policy_id}.json"
     try:
-        raw = path.read_bytes()
+        raw = canonical_bytes(path.read_bytes())
         return json.loads(raw.decode("utf-8")), raw
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"策略不可读取: {exc}") from exc

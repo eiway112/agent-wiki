@@ -15,6 +15,11 @@ def _is_reparse_point(path: Path) -> bool:
         getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
+def canonical_bytes(data: bytes) -> bytes:
+    """发行身份须为提交内容的纯函数：换行归一 LF 后再哈希，否则同一提交在不同 eol 检出下产出不同 release_id。"""
+    return data.replace(b"\r\n", b"\n")
+
+
 def _read_regular_file(path: Path, label: str) -> bytes:
     if _is_reparse_point(path):
         raise ValueError(f"{label}不得为符号链接或重解析点: {path}")
@@ -23,7 +28,7 @@ def _read_regular_file(path: Path, label: str) -> bytes:
         if not stat.S_ISREG(info.st_mode):
             raise ValueError(f"{label}必须是普通文件: {path}")
         with path.open("rb") as handle:
-            return handle.read()
+            return canonical_bytes(handle.read())
     except OSError as exc:
         raise ValueError(f"{label}不可读取: {path}: {exc}") from exc
 

@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from release_contract import release_descriptor
+from release_contract import canonical_bytes, release_descriptor
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 CONTENT_ROOTS = {"原始采集", "知识库"}
@@ -71,7 +71,7 @@ def validate(instance_path: Path) -> dict:
     if not isinstance(policy_info, dict):
         raise ValueError("实例 manifest 缺少 policy")
     policy_path = relative_path(root, policy_info.get("path"), "policy.path")
-    policy_bytes = policy_path.read_bytes()
+    policy_bytes = canonical_bytes(policy_path.read_bytes())
     policy_hash = hashlib.sha256(policy_bytes).hexdigest()
     if policy_hash != policy_info.get("sha256"):
         raise ValueError("策略文件哈希与实例 manifest 不一致")
@@ -80,7 +80,7 @@ def validate(instance_path: Path) -> dict:
     if policy.get("id") != policy_id or policy.get("version") != policy_info.get("version"):
         raise ValueError("策略身份与实例 manifest 不一致")
     source_policy = PACKAGE_ROOT / "policies" / f"{policy_id}.json"
-    if not source_policy.is_file() or source_policy.read_bytes() != policy_bytes:
+    if not source_policy.is_file() or canonical_bytes(source_policy.read_bytes()) != policy_bytes:
         raise ValueError("实例策略与发行源策略不一致")
 
     return {
