@@ -66,14 +66,14 @@ python scripts/validate.py examples
 | 交叉引用（目录.md 链接可达） | ERROR |
 | 来源白名单（URL 域名匹配） | WARN |
 | 蒸馏卡规范性（适用边界/来源指针必需且非空） | ERROR |
-| 落地台账一致性（状态↔载体↔台账；采用门控生效） | ERROR（缺指针/语法无效/🟢 无存活载体）；注入面不可达 → SKIP + 🟢 降 WARN |
+| 落地台账一致性（状态↔载体↔台账；指针一致性采用门控生效） | ERROR（缺指针/语法无效/🟢 无存活载体）；注入面不可达 → SKIP + 🟢 降 WARN；台账存在义务不受门控——未采用且缺失记 WARN 迁移提示 |
 | 目录台账一致性（目录.md ↔ 落地台账；采用门控生效） | ERROR（目录引用卡不在台账）；WARN（台账卡目录未引用） |
 | 🟢 回测到期（机算日期锚点，t0「落地自查」不计） | ERROR（距最近合格回测 > 14 天）；WARN（无任何可用日期，不可核 ≠ 通过） |
 | 归因命中字段（ingest/lint/query 条目含非空 `**命中:**`） | WARN（缺失或留空；围栏示例不算登记）；无操作日志 → SKIP |
 
-退出码：0 = PASS / PASS_WITH_SKIP（有可选检查被跳过，如未采用门控 `not_adopted`、注入面不可达 `unreachable`，附覆盖率与 skip 原因，不表述为全维通过），1 = FAIL（有 ERROR）。WARN 不阻塞但应定期审视（Harness 递减）。`--refresh-landing-ledger` 是治具唯一写文件动作（原子生成机器可读的 `知识库/落地台账.md`，禁手编）；它拒绝符号链接与重解析点，门禁路径只读。
+退出码：0 = PASS / PASS_WITH_SKIP（有可选检查被跳过，如未采用门控 `not_adopted`、注入面不可达 `unreachable`，附覆盖率与 skip 原因，不表述为全维通过），1 = FAIL（有 ERROR）。WARN 不阻塞但应定期审视（Harness 递减）。`--refresh-landing-ledger` 是治具唯一写文件动作（原子生成机器可读的 `知识库/落地台账.md`，禁手编，不受采用门控——旧实例可借此自救）；它拒绝符号链接与重解析点，门禁路径只读。
 
-治具自身受红绿双向回归保护（`python tests/test_validate.py`）：正向验 `examples/` 判 PASS，反向按十一维各造一次违规验均被拦为 ERROR，并验 WARN 不阻塞、二进制豁免留痕、采用门控 `not_adopted` 跳过、注入面不可达降级 WARN、`auto_injection=false` 封顶 WARM。CI（`.github/workflows/lint.yml`）在 Ubuntu 与 Windows 双平台执行同一套。
+治具自身受红绿双向回归保护（`python tests/test_validate.py`）：正向验 `examples/` 判 PASS，反向按十一维各造一次违规验均被拦为 ERROR，并验 WARN 不阻塞、二进制豁免留痕、采用门控 `not_adopted` 跳过、注入面不可达降级 WARN、`auto_injection=false` 封顶 WARM、未采用态台账缺失迁移提示与 refresh 自救。CI（`.github/workflows/lint.yml`）在 Ubuntu 与 Windows 双平台执行同一套。
 
 ## 目录结构
 

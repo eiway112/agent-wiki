@@ -394,6 +394,31 @@ class TestAdoptionGate(FixtureCase):
         self.assertIn("dimension_9_index_ledger:not_adopted", out)
         self.assertIn("PASS_WITH_SKIP", out)
 
+    def test_unadopted_missing_ledger_warns_migration_hint(self):
+        # 未采用旧实例：台账缺失不得沉默——WARN 迁移提示，但不得升 ERROR（门控初衷）
+        ledger = self.root / "知识库" / "落地台账.md"
+        if ledger.exists():
+            ledger.unlink()
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, f"迁移提示为 WARN 级，不应失败：\n{out}")
+        self.assertIn("台账缺失（机制未采用，迁移提示）", out)
+        self.assertIn("--refresh-landing-ledger", out)
+        self.assertIn("PASS_WITH_SKIP", out)
+
+    def test_unadopted_refresh_generates_ledger_and_silences_hint(self):
+        # refresh 不受门控：未采用旧实例可自救生成台账；生成后提示消失（防误报守卫）
+        ledger = self.root / "知识库" / "落地台账.md"
+        if ledger.exists():
+            ledger.unlink()
+        rc, out = run_validator(self.root, "--refresh-landing-ledger")
+        self.assertEqual(0, rc, f"未采用实例跑 refresh 应可用：\n{out}")
+        self.assertIn("[WRITE]", out)
+        self.assertTrue(ledger.exists(), "refresh 应在未采用态下生成台账")
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertNotIn("迁移提示", out)
+        self.assertIn("dimension_8_landing_ledger:not_adopted", out)
+
 
 class AdoptedFixtureCase(FixtureCase):
     """采用态基线：注入面可达 + 带落地指针的 🟢 卡 + 已刷新台账，门禁全维 PASS。"""

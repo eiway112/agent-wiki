@@ -30,6 +30,9 @@
     知识库声明 程序文件/配置/注入面.json，或任一蒸馏卡携带「- 落地指针:」字段
     → 机制已采用，两维完整校验；两者皆无 → 两维记 SKIP(not_adopted) 并计入
     覆盖率账本，不报 ERROR。技能不假设任何平台具备常驻记忆注入能力。
+    门控的两处例外：--refresh-landing-ledger 写动作与「台账缺失」存在义务
+    不受门控——台账是 Query 第 1 步的规则集来源，独立于注入面采用；未采用
+    且台账缺失记 WARN 迁移提示（不报 ERROR），指针一致性仍按上述门控。
 
 降级语义（能力边界 ≠ 缺陷）:
     - 注入面路径不可达（平台迁移 / 占位符模板未填）→ 指针解析记 UNVERIFIED，
@@ -728,21 +731,31 @@ def main():
     for fp in files:
         check_file(fp, root, whitelist, errors, warns)
 
-    # 维度 8/9 采用门控：注入面.json 存在 OR 任一蒸馏卡含「- 落地指针:」字段才生效，
-    # 否则记 not_adopted 跳过——防跨平台假抽象（无落地指针约定的库不应被强判 ERROR）。
+    # refresh 写动作不受采用门控：台账是 Query 第 1 步的规则集来源，其存在义务
+    # 独立于注入面采用——否则未采用旧实例陷入「Query 停摆、Lint 沉默、refresh
+    # 不可用」三重盲，迁移只能靠有人记得。
+    if args.refresh_landing_ledger:
+        try:
+            refresh_landing_ledger(root)
+        except (OSError, ValueError) as exc:
+            print(f"  [ERROR] {WIKI_DIR}/{LEDGER_NAME}: 安全写入被拒绝 — {exc}", file=out)
+            return 1
+        print(f"  [WRITE] {WIKI_DIR}/{LEDGER_NAME} 已重新生成", file=out)
+
+    # 维度 8/9 采用门控：注入面.json 存在 OR 任一蒸馏卡含「- 落地指针:」字段才生效——
+    # 防跨平台假抽象（无落地指针约定的库不应被强判指针一致性 ERROR）。
+    # 但台账存在义务不在门控沉默范围：未采用且台账缺失记 WARN 迁移提示，不报 ERROR。
     if mechanism_adopted(root):
-        if args.refresh_landing_ledger:
-            try:
-                refresh_landing_ledger(root)
-            except (OSError, ValueError) as exc:
-                print(f"  [ERROR] {WIKI_DIR}/{LEDGER_NAME}: 安全写入被拒绝 — {exc}", file=out)
-                return 1
-            print(f"  [WRITE] {WIKI_DIR}/{LEDGER_NAME} 已重新生成", file=out)
         check_landing_consistency(root, errors, warns, skip_reasons)
         check_index_ledger_consistency(root, errors, warns, skip_reasons)
     else:
         skip_reasons.append("dimension_8_landing_ledger:not_adopted")
         skip_reasons.append("dimension_9_index_ledger:not_adopted")
+        if not (root / WIKI_DIR / LEDGER_NAME).exists():
+            warns.append(
+                f"{WIKI_DIR}/{LEDGER_NAME}: 落地台账 — 台账缺失（机制未采用，迁移提示）："
+                "Query 第 1 步以其为规则集来源；运行 python scripts/validate.py"
+                " <知识库根目录> --refresh-landing-ledger 生成并提交")
 
     # 维度 10/11 不受采用门控约束：三色标记与操作日志属核心流程，任何平台上都存在
     # 承担者；把它们挂在必经门禁上正是为了不让效果门与归因登记退回「人记得做」。
