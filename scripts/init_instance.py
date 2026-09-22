@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 from release_contract import canonical_bytes, release_descriptor
+from validate import refresh_landing_ledger
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 
@@ -98,12 +99,18 @@ def main():
     args = parser.parse_args()
 
     root = args.root.resolve()
-    require_empty_root(root)
+    # 只读预检全部前置（F08）：策略/适配器/记忆目录/模板/发行身份任何一步失败都
+    # 不得留下半初始化目录——require_empty_root 拒绝接管非空目录，半途失败会让
+    # 同一命令重试必败，用户只能手工清场。
+    if args.policy == "knowledge-collection-workflow" and not args.backup_directory:
+        parser.error("knowledge-collection-workflow 策略需要 --backup-directory")
     adapter = load_adapter(args.adapter)
     capabilities = adapter["capabilities"]
     policy, policy_bytes = read_policy(args.policy)
-    if args.policy == "knowledge-collection-workflow" and not args.backup_directory:
-        parser.error("knowledge-collection-workflow 策略需要 --backup-directory")
+    surface = render_surface(adapter, args.user_memory_dir, args.project_memory_dir)
+    release = release_descriptor(PACKAGE_ROOT)
+
+    require_empty_root(root)
 
     raw_dir = root / "原始采集"
     wiki_dir = root / "知识库"
@@ -118,9 +125,8 @@ def main():
     policy_target = config_dir / "agent-wiki-policy.json"
     policy_target.write_bytes(policy_bytes)
     write_json(config_dir / "来源白名单.json", {"sources": [{"name": domain, "domains": [domain]} for domain in args.source_domain]})
-    write_json(config_dir / "注入面.json", render_surface(adapter, args.user_memory_dir, args.project_memory_dir))
+    write_json(config_dir / "注入面.json", surface)
 
-    release = release_descriptor(PACKAGE_ROOT)
     lock_path = config_dir / "agent-wiki-release.lock.json"
     write_json(lock_path, {
         "format": "agent-wiki-release-lock/v1",
@@ -144,6 +150,9 @@ def main():
     (wiki_dir / "目录.md").write_text("# 知识库目录\n\n", encoding="utf-8")
     (wiki_dir / "操作日志.md").write_text("# 操作日志\n\n", encoding="utf-8")
     (wiki_dir / "采集经验.md").write_text("# 采集经验\n\n", encoding="utf-8")
+    # 首版落地台账随初始化生成：台账是 Query 第 1 步的规则集来源，也是维度 8 的
+    # 必查对象——init 不产它，新实例第一次门禁必 ERROR，恢复只能靠人记得 refresh。
+    refresh_landing_ledger(root)
     print(config_dir / "agent-wiki-instance.json")
 
 

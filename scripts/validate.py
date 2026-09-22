@@ -7,17 +7,17 @@
     python scripts/validate.py <知识库根目录> --refresh-landing-ledger
 
 十一维校验（结构层 1-9；10/11 为判断层回测与归因的机检臂，不替代人工裁定）:
-    1. 元数据完整性 — 原始采集文件须含 URL/采集时间/采集命令      (ERROR)
+    1. 元数据完整性 — 元数据区须含 URL/采集时间/采集命令 的非空字段值 (ERROR)
     2. 编码正确性   — UTF-8 可解码、无 U+FFFD、无双重编码签名      (ERROR)
-    3. 格式规范性   — Markdown H1 开头、--- 分隔；JSON 须有 _metadata (ERROR)
+    3. 格式规范性   — Markdown H1 开头、--- 分隔；JSON _metadata 非空且含必填字段 (ERROR)
     4. 命名规范     — 原始采集遵循 {source}_{topic}_{date}.{ext}   (WARN)
-    5. 交叉引用     — Wiki 页面 Markdown 相对链接可达              (ERROR)
+    5. 交叉引用     — 链接可达（去 #锚点后比对）、目录.md 必需入口与孤儿检测 (ERROR/WARN)
     6. 来源白名单   — 原始采集 URL 域名属于白名单                  (WARN)
     7. 蒸馏卡规范性 — 蒸馏卡必含非空「适用边界」「来源指针」章节    (ERROR)
-    8. 落地台账一致性 — 蒸馏卡落地指针与注入面实况解析              (ERROR/WARN)
+    8. 落地台账一致性 — 卡内状态/判定与台账机器块收录与取值逐一对账 (ERROR)
     9. 目录台账一致性 — 目录.md 引用的蒸馏卡与落地台账对账          (ERROR/WARN)
-   10. 🟢 回测到期   — 距最近合格回测超窗口判 ERROR，锚点由机器算    (ERROR/WARN)
-   11. 归因命中字段 — ingest/lint/query 条目须有非空「**命中:**」    (WARN)
+   10. 🟢 回测到期   — 距最近合格回测超窗口判 ERROR；围栏示例不算记录 (ERROR/WARN)
+   11. 归因命中字段 — ingest/lint/query 条目须有非空「**命中:**」，他节不回填 (WARN)
 
 维度 10/11 的判据边界（越界即越权，猜真伪不如记不可判）:
     维度 10 只求值「距最近一条三要素齐全记录的天数」，不裁执行者是否真独立、
@@ -99,6 +99,13 @@ BACKTEST_SECTION = "回测记录"
 # t0「落地自查」行不作锚点：它由 Generator 落地当日自写，既未「超两周」也无
 # 「历史真实任务」，让它计锚等于把效果门的钥匙交回生成者。
 BACKTEST_T0_EXCLUDE_RE = re.compile(r"落地自查")
+# 回测记录字段边界：字段以 |/｜或换行分隔，值须非空——旧版宽松正则让
+# 「执行者:（空） 历史任务标识: X」同行吞并后一字段值，也认围栏内示例文本。
+BACKTEST_CHUNK_RE = re.compile(r"[|｜]")
+BACKTEST_FIELD_RE = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:\*\*)?\s*(执行者|历史任务标识|回测靶|结论|裁定)"
+    r"\s*(?:\*\*)?\s*[：:]\s*(?:\*\*)?\s*(.*?)\s*$")
+BACKTEST_VERDICT_PREFIX = ("保留", "降级", "补边界")
 
 # ---------- 维度 11：归因命中字段 ----------
 LOG_NAME = "操作日志.md"
@@ -140,6 +147,49 @@ def card_section_body(content: str, name: str):
     rest = content[m.end():]
     nxt = re.search(r"^##\s", rest, re.M)
     return (rest[: nxt.start()] if nxt else rest).strip()
+
+
+def strip_code_fences(text: str) -> str:
+    """剔除围栏代码块行：贴进正文的「格式示例」不是真实记录（维度 10 锚点判据）。"""
+    kept = []
+    fence = None
+    for line in text.splitlines():
+        if fence:
+            if re.fullmatch(r" {0,3}" + re.escape(fence[0])
+                            + "{" + str(len(fence)) + r",}[ \t]*", line):
+                fence = None
+            continue
+        marker = FENCE_RE.match(line)
+        if marker:
+            fence = marker.group(1)
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def index_references_name(index_text: str, name: str) -> bool:
+    """索引引用 = 热层索引里确有指向该文件名的条目链接（去 #锚点 后按名比对）。
+
+    旧版用文件名子串匹配，注释里提到 `rule.md.old` 也能把 `rule.md` 判成 HOT——
+    「被索引引用」是 HOT 判定的唯一机器依据，提及不等于引用。
+    """
+    return any(Path(t.split("#", 1)[0]).name == name for t in LINK_RE.findall(index_text))
+
+
+def meta_field_value(block: str, field: str):
+    """在元数据区内解析 `字段: 值` 取非空值；正文提及字段名不算登记了值。
+
+    冒号与值之间只允许水平空白：用 \\s* 时空值字段会把下一行误吞为值（跨行假命中）。
+    纯星号值是 `**字段:**` 的加粗闭合符被回溯进值组的假命中，按空值处理。
+    """
+    pattern = re.compile(
+        r"^[ \t]*(?:[-*][ \t]*)?(?:\*\*)?[ \t]*" + re.escape(field) +
+        r"[ \t]*(?:\*\*)?[ \t]*[：:][ \t]*(?:\*\*)?[ \t]*(\S.*?)[ \t]*$", re.M)
+    for m in pattern.finditer(block):
+        value = m.group(1).strip()
+        if value.strip("*"):
+            return value
+    return None
 
 
 def load_whitelist(root: Path):
@@ -244,7 +294,8 @@ def resolve_pointer(token: str, surfaces: dict):
                     if ix.get("kind") != "memory_index":
                         continue
                     ip = Path(ix["path"])
-                    if ip.is_file() and name in ip.read_text(encoding="utf-8"):
+                    if ip.is_file() and index_references_name(
+                            ip.read_text(encoding="utf-8"), name):
                         if not auto_inject:
                             return "WARM", "按需", (
                                 f"{name} 存在且被索引引用，但{cap_note}，"
@@ -274,6 +325,10 @@ def card_landing_row(card: Path, surfaces) -> dict:
     if pointers is None:
         row["verdict"] = "MISSING_FIELD"
         row["evidence"] = "缺少「- 落地指针:」字段"
+        return row
+    if not pointers:
+        row["verdict"] = "INVALID"
+        row["evidence"] = "落地指针仅有分隔符，无有效指针 token"
         return row
     if surfaces is None:
         row["evidence"] = "注入面不可达，未解析"
@@ -412,9 +467,11 @@ def check_landing_consistency(root: Path, errors, warns, skip_reasons):
                 kv = dict(p.split("=", 1) for p in ln.split(" ") if "=" in p)
                 committed[kv["card"]] = kv
 
+    seen = set()
     for card in iter_cards(root):
         row = card_landing_row(card, surfaces)
         rel = f"{WIKI_DIR}/{card.name}"
+        seen.add(card.name)
         if row["verdict"] == "MISSING_FIELD":
             errors.append(
                 f"{rel}: 落地台账 — 蒸馏卡缺少「- 落地指针:」字段"
@@ -423,6 +480,17 @@ def check_landing_consistency(root: Path, errors, warns, skip_reasons):
         if row["verdict"] == "INVALID":
             errors.append(f"{rel}: 落地台账 — 落地指针语法无效: {row['evidence']}")
             continue
+        # 台账收录与状态一致不依赖注入面可达：Query 第 1 步消费的就是这两项事实，
+        # 降级卡若不在账上对账，会在台账里继续以 🟢 硬约束身份被消费。
+        c = committed.get(card.name)
+        if c is None:
+            errors.append(
+                f"{rel}: 落地台账 — 台账未收录该卡（新卡未刷新、改手编台账或卡已改名）；"
+                "运行 --refresh-landing-ledger 刷新台账并提交")
+        elif c.get("status") != row["status"]:
+            errors.append(
+                f"{rel}: 落地台账 — 台账状态 {c.get('status')} 与卡内 {row['status']} 不一致"
+                "（升降级未刷新）；运行 --refresh-landing-ledger 刷新台账并提交")
         if row["verdict"] == "UNVERIFIED":
             # 注入面不可达：不阻断提交，但 🟢 不得继续表述为已核实生效
             if row["status"] == "🟢":
@@ -449,11 +517,15 @@ def check_landing_consistency(root: Path, errors, warns, skip_reasons):
             warns.append(
                 f"{rel}: 落地台账 — 🔵 参考索引却声明了落地载体；{row['evidence']}")
         # 台账与实况不一致（含平台迁移后未刷新）
-        c = committed.get(card.name)
         if c and surfaces is not None and c.get("verdict") != row["verdict"]:
             errors.append(
                 f"{rel}: 落地台账 — 台账判定 {c.get('verdict')} 与注入面实况 "
                 f"{row['verdict']} 不一致；运行 --refresh-landing-ledger 刷新台账并提交")
+    # 台账里的幽灵行：卡已删除/改名但行还在——Query 按台账取 🟢 集会消费不存在的规则
+    for name in sorted(set(committed) - seen):
+        errors.append(
+            f"{WIKI_DIR}/{name}: 落地台账 — 台账仍记录该卡但 知识库/ 中已无此文件"
+            "（卡删除/改名后未刷新）；运行 --refresh-landing-ledger 刷新台账并提交")
     if ledger_reachable == "yes" and surf_skip:
         warns.append(
             f"{WIKI_DIR}/{LEDGER_NAME}: 落地台账 — 台账生成时注入面可达，本次不可达"
@@ -469,7 +541,7 @@ def check_index_ledger_consistency(root: Path, errors, warns, skip_reasons):
     index_file = root / WIKI_DIR / "目录.md"
     ledger_file = root / WIKI_DIR / LEDGER_NAME
     if not index_file.exists():
-        return  # 目录.md 缺失由交叉引用检查报告
+        return  # 目录.md 缺失由维度 5 的必需入口检查（check_wiki_index_entries）报告
     if not ledger_file.exists():
         return  # 台账缺失由维度 8 报告
 
@@ -485,7 +557,8 @@ def check_index_ledger_consistency(root: Path, errors, warns, skip_reasons):
 
     index_cards = set()
     for match in LINK_RE.finditer(index_content):
-        card_name = Path(match.group(1)).name
+        # 去 #锚点 再取文件名：`蒸馏卡_x.md#适用边界` 与 `蒸馏卡_x.md` 是同一张卡
+        card_name = Path(match.group(1).split("#", 1)[0]).name
         if card_name.startswith(CARD_PREFIX):
             index_cards.add(card_name)
 
@@ -499,17 +572,73 @@ def check_index_ledger_consistency(root: Path, errors, warns, skip_reasons):
             "应在目录.md 中建立引用")
 
 
+# 目录/台账/日志/采集经验是骨架页，孤儿检测只裁内容页
+WIKI_CORE_PAGES = {"目录.md", LEDGER_NAME, LOG_NAME, "采集经验.md"}
+
+
+def check_wiki_index_entries(root: Path, errors, warns):
+    """维度 5 补充：必需入口存在性 + 孤儿页面检测（不受采用门控）。
+
+    注释曾称「目录.md 缺失由交叉引用检查报告」而对面没有实现——本函数即该承诺的
+    承担者：目录.md 是 Query 降级检索与入库导航的入口，缺失判 ERROR；目录.md 未
+    引用任何入链的内容页判 WARN（孤儿 ≠ 断链，不阻塞提交）。
+    """
+    wiki = root / WIKI_DIR
+    if not wiki.is_dir():
+        return
+    index_file = wiki / "目录.md"
+    if not index_file.exists():
+        errors.append(
+            f"{WIKI_DIR}/目录.md: 交叉引用 — 必需入口 目录.md 缺失"
+            "（Wiki 导航与 Query 降级检索入口）；从版本库恢复或重建")
+        return
+    referenced = {Path(t.split("#", 1)[0]).name
+                  for t in LINK_RE.findall(index_file.read_text(encoding="utf-8-sig"))}
+    for page in sorted(wiki.glob("*.md")):
+        if page.name in WIKI_CORE_PAGES or page.name in referenced:
+            continue
+        warns.append(
+            f"{WIKI_DIR}/{page.name}: 交叉引用 — 孤儿页面：目录.md 未引用该页；"
+            "应在目录.md 建立引用，或按冷层约定归档")
+
+
 # ---------- 维度 10/11：判断层回测与归因的机检臂 ----------
+
+def record_has_three_elements(text: str) -> bool:
+    """按字段边界求值三要素：字段须以 |/｜或换行为界，值非空。
+
+    旧版用 `执行者[：:]([^\\n|｜]+)` 全文搜刮，「执行者:（空） 历史任务标识: X」
+    会吞并后一字段充当执行者；现在逐 chunk 锚定匹配，空字段就是缺要素。
+    """
+    found = set()
+    for line in text.splitlines():
+        for chunk in BACKTEST_CHUNK_RE.split(line):
+            m = BACKTEST_FIELD_RE.match(chunk)
+            if not m:
+                continue
+            key, value = m.group(1), m.group(2).strip("*").strip()
+            if not value:
+                continue
+            if key in ("结论", "裁定"):
+                if value.startswith(BACKTEST_VERDICT_PREFIX):
+                    found.add("verdict")
+            elif key == "执行者":
+                found.add("executor")
+            else:  # 历史任务标识 / 回测靶
+                found.add("task")
+    return {"executor", "task", "verdict"} <= found
+
 
 def backtest_anchor_days(body: str, card_name: str):
     """距最近一条合格回测的天数；无可解锚点返回 None。
 
     只取三要素（执行者／历史任务标识／结论）齐全的记录——缺一即未回测，
-    「- 2026-06-30 待补回测」这类有日期无内容的行不得清零到期数。无合格记录时
-    回落到卡名日期（落地日），使「一条回测都没有」等于满窗到期而不是永久免检。
+    「- 2026-06-30 待补回测」这类有日期无内容的行不得清零到期数。围栏代码块内
+    是「回测格式示例」而非记录，先整块剔除再解析。无合格记录时回落到卡名日期
+    （落地日），使「一条回测都没有」等于满窗到期而不是永久免检。
     独立性与结论真伪不在本函数判据内（归判断层人工抽样），猜即越界。
     """
-    seg = card_section_body(body, BACKTEST_SECTION) or ""
+    seg = strip_code_fences(card_section_body(body, BACKTEST_SECTION) or "")
     today = datetime.now().date()
     parsed = []
     for record in re.split(r"(?m)^(?=-[ \t]+\d{4}-\d{2}-\d{2}\b)", seg):
@@ -517,12 +646,7 @@ def backtest_anchor_days(body: str, card_name: str):
         stamp = re.match(r"-[ \t]+(\d{4}-\d{2}-\d{2})\b", header)
         if not stamp or BACKTEST_T0_EXCLUDE_RE.search(header):
             continue
-        text = record.replace("**", "").replace("`", "")
-        executor = re.search(r"执行者[：:][ \t]*([^\n|｜]+)", text)
-        task = re.search(r"(?:历史任务标识|回测靶)[：:][ \t]*([^\n|｜]+)", text)
-        verdict = re.search(r"(?:结论|裁定)[：:][ \t]*(?:保留|降级|补边界)", text)
-        if not (executor and executor.group(1).strip()
-                and task and task.group(1).strip() and verdict):
+        if not record_has_three_elements(record.replace("`", "")):
             continue
         try:
             day = datetime.strptime(stamp.group(1), "%Y-%m-%d").date()
@@ -599,6 +723,7 @@ def check_attribution_hit_field(root: Path, errors, warns, skip_reasons):
             "（归因率无源头数据；SKILL.md 约定该文件为 append-only 登记面）")
         return
     entries = []  # [日期, 类型, 是否已登记非空字段]
+    current = None  # 当前生效条目；遇非条目标题重置，字段不得跨章节回填上一条目
     fence = None
     for line in log_file.read_text(encoding="utf-8-sig", errors="replace").splitlines():
         marker = FENCE_RE.match(line)
@@ -613,11 +738,15 @@ def check_attribution_hit_field(root: Path, errors, warns, skip_reasons):
             continue
         header = LOG_ENTRY_RE.match(line)
         if header:
-            entries.append([header.group(1), header.group(2), False])
+            current = [header.group(1), header.group(2), False]
+            entries.append(current)
+            continue
+        if re.match(r"^#{1,6}\s", line):
+            current = None  # 无关同级/子级章节（附录、说明段）从此不为本条补字段
             continue
         field = HIT_FIELD_RE.match(line)
-        if entries and field and field.group(1).strip():
-            entries[-1][2] = True
+        if current is not None and field and field.group(1).strip():
+            current[2] = True
     for date, kind, registered in entries:
         if kind not in ATTRIBUTION_KINDS or registered:
             continue
@@ -666,10 +795,15 @@ def check_file(fp: Path, root: Path, whitelist, errors, warns):
                 errors.append(f"{rel}: 格式 — Markdown 须以 H1 开头")
             if "---" not in content[:2000]:
                 errors.append(f"{rel}: 格式 — 元数据与正文须以 --- 分隔（前 2000 字符内）")
-            # 维度 1：元数据
+            # 维度 1：元数据——只在元数据区（首个 --- 分隔线之前）按 `字段: 值` 解析，
+            # 正文提一嘴「URL、采集时间、采集命令」不算登记（旧版全文子串检出的空转）
+            sep = re.search(r"(?m)^---\s*$", content)
+            meta_block = content[:sep.start()] if sep else content
             for field in REQUIRED_META:
-                if field not in content:
-                    errors.append(f"{rel}: 元数据 — 缺少必需字段「{field}」")
+                if meta_field_value(meta_block, field) is None:
+                    errors.append(
+                        f"{rel}: 元数据 — 必需字段「{field}」缺失或值为空"
+                        "（须为元数据区内 `字段: 值` 形态，正文提及不算）")
             # 维度 6：来源白名单
             m = re.search(r"https?://[^\s<>)\]]+", content[:2000])
             if whitelist is not None and m:
@@ -681,7 +815,10 @@ def check_file(fp: Path, root: Path, whitelist, errors, warns):
             for target in LINK_RE.findall(content):
                 if target.startswith(("http://", "https://", "mailto:")):
                     continue
-                if not (fp.parent / target).resolve().exists():
+                path_part = target.split("#", 1)[0]  # 章节锚点不是路径的一部分
+                if not path_part:
+                    continue
+                if not (fp.parent / path_part).resolve().exists():
                     errors.append(f"{rel}: 交叉引用 — 断链 [{target}]")
         # 维度 7：蒸馏卡规范性（语义要求下沉为结构特征，治具裁定）
         if fp.name.startswith(CARD_PREFIX):
@@ -697,8 +834,20 @@ def check_file(fp: Path, root: Path, whitelist, errors, warns):
         except json.JSONDecodeError as e:
             errors.append(f"{rel}: 格式 — JSON 解析失败: {e}")
             return
-        if is_raw and not (isinstance(data, dict) and "_metadata" in data):
-            errors.append(f"{rel}: 格式 — 原始采集 JSON 须含 _metadata 字段")
+        if is_raw:
+            meta = data.get("_metadata") if isinstance(data, dict) else None
+            if not isinstance(meta, dict) or not meta:
+                errors.append(
+                    f"{rel}: 格式 — 原始采集 JSON 须含非空 _metadata 对象"
+                    "（空信封 `{{\"_metadata\": {{}}}}` 不证明任何来源登记）")
+            else:
+                for field in REQUIRED_META:
+                    value = next((meta[k] for k in meta
+                                  if k.lower() == field.lower()), None)
+                    if value is None or (isinstance(value, str) and not value.strip()) \
+                            or (isinstance(value, (list, dict)) and not value):
+                        errors.append(
+                            f"{rel}: 元数据 — _metadata.{field} 缺失或为空值")
 
 
 def main():
@@ -739,6 +888,10 @@ def main():
     print(f"校验目标: {root}（{len(files)} 个文件，白名单{'已加载' if whitelist else '未配置/跳过'}）", file=out)
     for fp in files:
         check_file(fp, root, whitelist, errors, warns)
+
+    # 维度 5 的必需入口与孤儿检测：全局视角无法逐文件裁，挂在文件循环之后；
+    # 不受维度 8/9 采用门控——目录.md 属三层架构的 Wiki 层骨架，与注入面无关。
+    check_wiki_index_entries(root, errors, warns)
 
     # refresh 写动作不受采用门控：台账是 Query 第 1 步的规则集来源，其存在义务
     # 独立于注入面采用——否则未采用旧实例陷入「Query 停摆、Lint 沉默、refresh

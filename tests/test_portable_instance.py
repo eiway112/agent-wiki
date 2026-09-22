@@ -102,6 +102,32 @@ class PortableInstanceTest(unittest.TestCase):
         self.assertIn("必须为空", result.stderr)
         self.assertTrue((self.root / "foreign-content.md").is_file())
 
+    def test_init_preflight_failure_leaves_no_partial_root(self):
+        # F08：记忆目录缺失/发行身份计算失败等预检不过，不得先建目录写文件再报错——
+        # require_empty_root 拒绝接管非空目录，半初始化态会让同一命令重试必败
+        result = subprocess.run([
+            "python", str(INIT), "--root", str(self.root), "--policy", "core",
+            "--adapter", "qoder",
+            "--user-memory-dir", str(self.base / "no-such-memory-dir"),
+            "--project-memory-dir", str(self.project_memory),
+            "--source-domain", "example.org",
+        ], capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(
+            self.root.exists() and any(self.root.iterdir()),
+            "预检失败后实例根目录不得留下任何半成品")
+
+    def test_init_generates_landing_ledger_and_gate_passes_immediately(self):
+        # F08 后半：台账是 Query 第 1 步的规则集来源，init 不产它则新实例第一次门禁
+        # 必 ERROR，「初始化完成」与「可用」之间凭空多一道只能靠人记得的恢复步骤
+        self.assertEqual(self.initialize().returncode, 0)
+        self.assertTrue((self.root / "知识库" / "落地台账.md").is_file(),
+                        "init 应生成首版落地台账")
+        result = subprocess.run(["python", str(VALIDATE), str(self.root)],
+                                capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertEqual(result.returncode, 0, result.stdout + "\n" + result.stderr)
+        self.assertIn("结果: PASS", result.stdout)
+
     def test_release_build_is_content_free_and_runnable(self):
         release = self.base / "release"
         build = subprocess.run(["python", str(BUILD), "--output", str(release)], capture_output=True, text=True, encoding="utf-8", env=ENV)
@@ -143,6 +169,32 @@ class PortableInstanceTest(unittest.TestCase):
                                 capture_output=True, text=True, encoding="utf-8", env=ENV)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((sentinel / "release.json").exists())
+
+    def test_lock_rejects_policy_path_resolving_into_content_root(self):
+        # F09：「不读取知识内容」承诺的承担者是锁校验器自身。原始路径在配置目录、
+        # 经符号链接/目录联接解析后落入 知识库/ 时，只查原始首段的旧判据会放行，
+        # 承诺变假；须在解析后的真实归属上同样拒绝。
+        self.assertEqual(self.initialize().returncode, 0)
+        config = self.root / "程序文件" / "配置"
+        policy_name = "agent-wiki-policy.json"
+        real = self.root / "知识库" / policy_name
+        os.rename(config / policy_name, real)
+        try:
+            os.symlink(real, config / policy_name)
+        except OSError:
+            created = subprocess.run(
+                ["cmd", "/c", "mklink", "/J",
+                 str(config / "kb"), str(self.root / "知识库")],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", env=ENV)
+            if created.returncode != 0:
+                self.skipTest("当前平台既无法创建符号链接也无法创建目录联接")
+            manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+            manifest["policy"]["path"] = f"程序文件/配置/kb/{policy_name}"
+            self.manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        result = self.lock_check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("知识内容", json.loads(result.stdout)["error"])
 
     def test_lock_passes_after_package_path_change(self):
         # F1 回归：异机/异路径携带实例只要 release_id 相同须 PASS；

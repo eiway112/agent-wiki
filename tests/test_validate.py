@@ -263,6 +263,26 @@ class TestNegativeDimensions(FixtureCase):
         body = GOOD_CARD.replace("前提：仅适用于零依赖治具可裁定的结构特征。", "")
         self.assertError("知识库/蒸馏卡_fixture_20260630.md", body, "为空")
 
+    def test_d1_prose_mention_of_fields_is_not_registration(self):
+        # 旧版全文子串检出：正文提一嘴三个字段名即可满足「元数据完整」——须拦下
+        body = GOOD_RAW_MD.replace("**采集命令:** 手动粘贴（夹具）\n", "")
+        body = body.replace("正文内容。",
+                            "正文提到了 URL、采集时间、采集命令 三个词，但元数据区缺字段。")
+        self.assertError("原始采集/文章/sample_good_20260630.md", body, "元数据")
+
+    def test_d1_field_present_with_empty_value_errors(self):
+        body = GOOD_RAW_MD.replace("**采集命令:** 手动粘贴（夹具）", "**采集命令:**")
+        self.assertError("原始采集/文章/sample_good_20260630.md", body, "值为空")
+
+    def test_d3_json_empty_metadata_envelope_errors(self):
+        # `{"_metadata": {}}` 曾直接过关：空信封不证明任何来源登记
+        self.assertError("原始采集/文章/sample_data_20260630.json",
+                         '{"_metadata": {}}\n', "_metadata")
+
+    def test_d1_json_metadata_missing_required_key_errors(self):
+        body = GOOD_RAW_JSON.replace('"采集命令": "公开API（夹具）"', '"site": "github"')
+        self.assertError("原始采集/文章/sample_data_20260630.json", body, "元数据")
+
 
 class TestNonBlockingExemptions(FixtureCase):
 
@@ -329,6 +349,25 @@ class TestGreenBacktestStaleness(FixtureCase):
         self.assertWarnOnly("知识库/蒸馏卡_无日期.md", self.card_with("- 未回测\n"),
                             "无可解日期锚点")
 
+    def test_fenced_example_is_not_a_backtest_record(self):
+        # 真实回测已过期，围栏里再贴一条「回测格式示例」不得把到期数清零为 0 天
+        record = (qualified_backtest(WINDOW_DAYS + 1)
+                  + "\n```markdown\n" + qualified_backtest(0) + "```\n")
+        self.assertError(self.CARD, self.card_with(record), "回测到期")
+
+    def test_empty_executor_cannot_swallow_next_field(self):
+        # 无字段分隔符的一行里，空「执行者:」曾吞并紧随的「历史任务标识」值充当自身
+        record = f"- {days_ago(0)} 执行者： 历史任务标识：任务X 结论：保留\n"
+        self.assertError(self.CARD, self.card_with(record), "回测到期")
+
+    def test_fullwidth_pipe_separated_record_counts(self):
+        # 正向守卫：全角｜同为合法字段边界，否则严格化会误杀模板教出来的记录格式
+        record = qualified_backtest().replace(" | ", " ｜ ")
+        self.write(self.CARD, self.card_with(record))
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, f"全角分隔的合格记录被误判无效：\n{out}")
+        self.assertNotIn("回测到期", out)
+
 
 class TestAttributionHitField(FixtureCase):
     """维度 11：只裁字段有无与非空，WARN 不阻塞；日志缺失记 SKIP 而非静默 PASS。"""
@@ -375,6 +414,15 @@ class TestAttributionHitField(FixtureCase):
         self.assertEqual(0, rc, out)
         self.assertIn("query 条目缺非空", out)
         self.assertNotIn("lint 条目缺非空", out)
+
+    def test_unrelated_later_section_cannot_backfill(self):
+        # 条目之后的无关同级章节（附录/说明段）里的字段曾替缺字段条目补上登记
+        body = (GOOD_LOG + f"\n## [{days_ago(0)}] query | 缺字段条目\n执行了检索但未记命中。\n"
+                f"\n## 附录：字段书写规范\n- **命中:** 无命中（这里是示例说明，不是登记）\n")
+        self.write(self.LOG, body)
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertIn("query 条目缺非空", out)
 
     def test_missing_log_is_skip_not_silent_pass(self):
         (self.root / "知识库" / "操作日志.md").unlink()
@@ -552,8 +600,8 @@ class AdoptedFixtureCase(FixtureCase):
 
     def test_d9_index_ahead_of_ledger_errors(self):
         # 维度 9 反向：新卡入库并在目录.md 建立引用，但台账未刷新——目录引用了台账中
-        # 不存在的卡，须 ERROR。维度 8 对「台账缺该行」不反应（漂移检查仅在 committed
-        # 行存在时触发），故此扰动单点落在维度 9。
+        # 不存在的卡，须 ERROR。维度 8 对此卡另报「台账未收录」（见
+        # TestLandingLedgerDrift），本用例锚定维度 9 的文案不随之漂移。
         self.write("知识库/蒸馏卡_new_20260630.md", ADOPTED_CARD)
         self.write("知识库/目录.md",
                    GOOD_INDEX + "- [落地卡](蒸馏卡_fix_20260630.md)\n"
@@ -590,6 +638,93 @@ class AdoptedFixtureCase(FixtureCase):
         rc, out = run_validator(self.root)
         self.assertEqual(1, rc, out)
         self.assertIn("最强 file: 载体仍为翻阅面文档", out)
+
+
+class TestCrossReferenceBoundary(FixtureCase):
+    """维度 5 补充：锚点不是路径、必需入口不缺位、孤儿页可见。"""
+
+    def test_anchor_link_is_not_a_broken_link(self):
+        # `卡名.md#适用边界` 是合法章节引用，曾被整串当文件名判断链
+        self.write("知识库/目录.md",
+                   GOOD_INDEX + "- [夹具卡边界](蒸馏卡_fixture_20260630.md#适用边界)\n")
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, f"章节锚点引用被误判断链：\n{out}")
+        self.assertNotIn("断链", out)
+
+    def test_missing_index_md_is_reported_not_silently_skipped(self):
+        # 旧注释称「目录.md 缺失由交叉引用检查报告」而对面没有实现——静默 return
+        (self.root / "知识库" / "目录.md").unlink()
+        rc, out = run_validator(self.root)
+        self.assertEqual(1, rc, f"目录.md 缺失被静默放过：\n{out}")
+        self.assertIn("必需入口", out)
+
+    def test_unreferenced_page_surfaces_as_orphan_warn(self):
+        body = "# 回填页\n\n一次 Query 的好答案。\n"
+        self.assertWarnOnly("知识库/回填页.md", body, "孤儿页面")
+
+
+class TestLandingLedgerDrift(AdoptedFixtureCase):
+    """维度 8 反向：台账是 Query 第 1 步的规则集来源——状态漂移、未收录、幽灵行
+    都会让降级规则继续以硬约束身份被消费，不能只比 verdict。"""
+
+    CARD = "知识库/蒸馏卡_fix_20260630.md"
+
+    def test_status_downgrade_without_refresh_errors(self):
+        card = self.root / "知识库" / "蒸馏卡_fix_20260630.md"
+        card.write_text(
+            card.read_text(encoding="utf-8").replace("- 落地状态: 🟢", "- 落地状态: 🟡"),
+            encoding="utf-8")
+        rc, out = run_validator(self.root)
+        self.assertEqual(1, rc, f"卡已降级 🟡 而台账仍记 🟢，未被发现：\n{out}")
+        self.assertIn("台账状态 🟢 与卡内 🟡 不一致", out)
+
+    def test_status_drift_resolved_by_refresh(self):
+        # 修复路径可用性：刷新并提交后错误须消失，否则判据不可执行
+        card = self.root / "知识库" / "蒸馏卡_fix_20260630.md"
+        card.write_text(
+            card.read_text(encoding="utf-8").replace("- 落地状态: 🟢", "- 落地状态: 🟡"),
+            encoding="utf-8")
+        rc, out = run_validator(self.root, "--refresh-landing-ledger")
+        self.assertEqual(0, rc, out)
+        self.assertIn("status=🟡", self.read_ledger())
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, f"刷新后状态漂移提示未消除：\n{out}")
+        self.assertNotIn("台账状态", out)
+
+    def test_new_card_absent_from_ledger_errors(self):
+        self.write("知识库/蒸馏卡_new2_20260630.md", ADOPTED_CARD)
+        rc, out = run_validator(self.root)
+        self.assertEqual(1, rc, f"新卡未入台账被静默放过：\n{out}")
+        self.assertIn("台账未收录该卡", out)
+
+    def test_deleted_card_leaves_ghost_row_error(self):
+        (self.root / "知识库" / "蒸馏卡_fix_20260630.md").unlink()
+        self.write("知识库/目录.md", GOOD_INDEX)
+        rc, out = run_validator(self.root)
+        self.assertEqual(1, rc, f"卡已删除但台账仍记录，未被发现：\n{out}")
+        self.assertIn("已无此文件", out)
+
+    def test_pointer_delimiter_only_is_invalid_not_crash(self):
+        # `- 落地指针: ;` 解析出空列表，旧版 min([]) 直接 ValueError 中断
+        self.write(self.CARD,
+                   ADOPTED_CARD.replace("- 落地指针: memory:feedback-fix.md",
+                                        "- 落地指针: ;"))
+        rc, out = run_validator(self.root)
+        self.assertEqual(1, rc, f"异常输入应判规范 ERROR：\n{out}")
+        self.assertIn("语法无效", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_index_mention_is_not_index_reference(self):
+        # 索引仅提到 `feedback-fix.md.old`（子串含 feedback-fix.md）不得判 HOT
+        mem = self.root / "程序文件" / "记忆" / "user"
+        (mem / "feedback-fix.md.old").write_text("# stale\n", encoding="utf-8")
+        (mem / "MEMORY.md").write_text(
+            "- [废弃备份，勿引用](feedback-fix.md.old)\n", encoding="utf-8")
+        rc, out = run_validator(self.root, "--refresh-landing-ledger")
+        self.assertEqual(0, rc, out)
+        ledger = self.read_ledger()
+        self.assertIn("verdict=WARM", ledger)
+        self.assertNotIn("verdict=HOT", ledger, "提及不等于索引引用，HOT 判定失真")
 
 
 if __name__ == "__main__":

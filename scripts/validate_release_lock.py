@@ -29,11 +29,14 @@ def relative_path(root: Path, value: object, label: str) -> Path:
         raise ValueError(f"{label}包含非法路径")
     resolved = (root / path).resolve()
     try:
-        resolved.relative_to(root)
+        inside = resolved.relative_to(root)
     except ValueError as exc:
         raise ValueError(f"{label}越出实例根目录") from exc
-    if path.parts and path.parts[0] in CONTENT_ROOTS:
-        raise ValueError(f"{label}不得指向知识内容目录")
+    # 首段检查必须对解析后的真实归属做：符号链接/重解析点的原始路径落在配置目录，
+    # resolve() 后却可掉进 知识库/ ——只查原始首段时「不读取知识内容」承诺被绕过。
+    for candidate in (path, inside):
+        if candidate.parts and candidate.parts[0] in CONTENT_ROOTS:
+            raise ValueError(f"{label}不得指向知识内容目录（含经链接解析后落入者）")
     return resolved
 
 

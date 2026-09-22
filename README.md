@@ -30,6 +30,8 @@
 | 其他有技能目录概念的平台 | 按该平台约定放入对应技能目录 |   
 | 无技能目录概念的平台 | 将 `SKILL.md` 作为系统提示/项目规范文件载入，按三层架构落地，目录名可本地化（SKILL.md:15） |
 
+> 单文件安装只交付方法论本体；下述步骤 3–4 依赖 `scripts/` 与 `examples/`，需取完整发行包（或克隆本仓）。只用 SKILL.md 时，Evaluator 由你实例自带的校验器承担，或按 SKILL.md「Lint」节十一维人工核查。
+
 2. 初始化知识库目录结构：
 
 ```
@@ -51,7 +53,7 @@ python scripts/validate.py examples
 
 本仓是唯一可分发的 `agent-wiki` 源。`release-manifest.json` 的显式 `include` 清单是发行身份的唯一输入；`scripts/build_release.py` 只复制清单文件并生成带 `release_id` 的 `release.json`，拒绝内容根目录、符号链接与重解析点进入发行包。输出目录必须不存在，构建器以原子创建方式拒绝覆盖已有路径。
 
-实例仅保留其配置、策略副本和 `程序文件/配置/agent-wiki-release.lock.json`。运行 `python scripts/validate_release_lock.py --instance <实例 manifest>` 会核验发行身份、实例策略哈希及源策略字节一致性；该路径只读取发行清单列出的文件和实例配置，绝不枚举或读取实例的 `原始采集/`、`知识库/`。
+实例仅保留其配置、策略副本和 `程序文件/配置/agent-wiki-release.lock.json`。运行 `python scripts/validate_release_lock.py --instance <实例 manifest>` 会核验发行身份、实例策略哈希及源策略字节一致性；该路径只读取发行清单列出的文件和实例配置，绝不枚举或读取实例的 `原始采集/`、`知识库/`——配置目录内的路径按 resolve 后的真实归属判定，经符号链接/重解析点落入内容根目录的指向同样被拒。
 
 ## Evaluator 示例（scripts/validate.py）
 
@@ -59,17 +61,17 @@ python scripts/validate.py examples
 
 | 维度 | 判定 |
 |---|---|
-| 元数据完整性（URL/采集时间/采集命令） | ERROR |
+| 元数据完整性（元数据区 `字段: 值` 解析，URL/采集时间/采集命令 值非空；正文提及不算） | ERROR |
 | 编码正确性（UTF-8、U+FFFD、双重编码签名） | ERROR |
-| 格式规范性（H1 开头、`---` 分隔、JSON `_metadata`） | ERROR |
+| 格式规范性（H1 开头、`---` 分隔；JSON `_metadata` 须为非空对象且含必填字段非空值） | ERROR |
 | 命名规范（`{source}_{topic}_{date}`） | WARN |
-| 交叉引用（目录.md 链接可达） | ERROR |
+| 交叉引用（链接去 `#锚点` 后可达；目录.md 必需入口缺失；未被目录引用的孤儿页面） | 断链/缺入口 ERROR；孤儿页 WARN |
 | 来源白名单（URL 域名匹配） | WARN |
 | 蒸馏卡规范性（适用边界/来源指针必需且非空） | ERROR |
-| 落地台账一致性（状态↔载体↔台账；指针一致性采用门控生效） | ERROR（缺指针/语法无效/🟢 无存活载体）；注入面不可达 → SKIP + 🟢 降 WARN；台账存在义务不受门控——未采用且缺失记 WARN 迁移提示 |
+| 落地台账一致性（状态↔载体↔台账逐卡对账：未收录/状态漂移/幽灵行/判定漂移皆 ERROR；指针一致性采用门控生效） | ERROR（缺指针/语法无效/🟢 无存活载体/台账失对）；注入面不可达 → SKIP + 🟢 降 WARN；台账存在义务不受门控——未采用且缺失记 WARN 迁移提示 |
 | 目录台账一致性（目录.md ↔ 落地台账；采用门控生效） | ERROR（目录引用卡不在台账）；WARN（台账卡目录未引用） |
-| 🟢 回测到期（机算日期锚点，t0「落地自查」不计） | ERROR（距最近合格回测 > 14 天）；WARN（无任何可用日期，不可核 ≠ 通过） |
-| 归因命中字段（ingest/lint/query 条目含非空 `**命中:**`） | WARN（缺失或留空；围栏示例不算登记）；无操作日志 → SKIP |
+| 🟢 回测到期（机算日期锚点，t0「落地自查」不计；记录按 \|/｜ 字段边界解析，围栏示例整块剔除） | ERROR（距最近合格回测 > 14 天）；WARN（无任何可用日期，不可核 ≠ 通过） |
+| 归因命中字段（ingest/lint/query 条目含非空 `**命中:**`，他节不回填） | WARN（缺失或留空；围栏示例不算登记）；无操作日志 → SKIP |
 
 退出码：0 = PASS / PASS_WITH_SKIP（有可选检查被跳过，如未采用门控 `not_adopted`、注入面不可达 `unreachable`，附覆盖率与 skip 原因，不表述为全维通过），1 = FAIL（有 ERROR）。WARN 不阻塞但应定期审视（Harness 递减）。`--refresh-landing-ledger` 是治具唯一写文件动作（原子生成机器可读的 `知识库/落地台账.md`，禁手编，不受采用门控——旧实例可借此自救）；它拒绝符号链接与重解析点，门禁路径只读。
 

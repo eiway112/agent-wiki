@@ -7,6 +7,10 @@
     "config": "程序文件/配置",
     "schema": "项目规范.md"
   },
+  "distribution": {
+    "source": "<PACKAGE_ROOT_PATH>",
+    "lock": "程序文件/配置/agent-wiki-release.lock.json"
+  },
   "policy": {
     "id": "core",
     "version": "1.0.0",
