@@ -55,6 +55,8 @@ python scripts/validate.py examples
 
 实例仅保留其配置、策略副本和 `程序文件/配置/agent-wiki-release.lock.json`。运行 `python scripts/validate_release_lock.py --instance <实例 manifest>` 会核验发行身份、实例策略哈希及源策略字节一致性；该路径只读取发行清单列出的文件和实例配置，绝不枚举或读取实例的 `原始采集/`、`知识库/`——配置目录内的路径按 resolve 后的真实归属判定，经符号链接/重解析点落入内容根目录的指向同样被拒。
 
+比对对象是**校验器自身所在的那份包**，PASS 与 FAIL 报告都以 `compared_against` 自述其路径与形态（`built-release` / `source-working-tree`，按 `release.json` 有无机检）。锁钉的是发行副本身份，所以判「实例锁是否失效」必须从该实例实际使用的发行副本（带 `release.json` 的那份）运行本脚本。从源仓工作树裸跑比出的是「工作树 vs 锁」之差：工作树领先于生效副本属交付前常态，此时脚本仍报 FAIL（不一致是事实，不予软化），但明确声明该不一致**无从裁定锁是否失效**并拒绝给出归因，不得据此登记锁失效或提前重钉。
+
 ## Evaluator 示例（scripts/validate.py）
 
 零依赖（仅 Python 3 标准库），覆盖 Lint 结构层十一维：

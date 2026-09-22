@@ -9,6 +9,17 @@ from release_contract import canonical_bytes, release_descriptor
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 CONTENT_ROOTS = {"原始采集", "知识库"}
+# release.json 由 build_release 成功时才落盘，故它的有无即「已构建发行副本 / 源仓工作树」
+# 的机检标记。发行身份本身始终按 include 清单重算（release_descriptor 不读该文件）。
+RELEASE_MARKER = "release.json"
+
+
+def package_kind(root: Path) -> str:
+    return "built-release" if (root / RELEASE_MARKER).is_file() else "source-working-tree"
+
+
+def compared_against() -> dict:
+    return {"path": str(PACKAGE_ROOT), "kind": package_kind(PACKAGE_ROOT)}
 
 
 def load_json(path: Path, label: str) -> dict:
@@ -60,10 +71,22 @@ def validate(instance_path: Path) -> dict:
     lock_path = relative_path(root, distribution.get("lock"), "distribution.lock")
     lock = load_json(lock_path, "发行锁")
     release = release_descriptor(PACKAGE_ROOT)
+    kind = package_kind(PACKAGE_ROOT)
     if lock.get("format") != "agent-wiki-release-lock/v1":
         raise ValueError("不支持的发行锁格式")
     if lock.get("release_id") != release["release_id"]:
-        raise ValueError("发行锁与源仓发行身份不一致")
+        detail = (f"锁 {lock.get('release_id')}，比对对象 {release['release_id']}"
+                  f"（{kind}: {PACKAGE_ROOT}）")
+        if kind == "source-working-tree":
+            # 不一致仍照实报 FAIL（检测力不降级），但归因不给：工作树不是发行物，
+            # 它与锁不同只证明「尚未构建/交付」，锁钉的是发行副本身份，就只有发行
+            # 副本能裁定锁是否失效——判据与约束必须同层。
+            raise ValueError(
+                "发行锁与本次比对对象的发行身份不一致: " + detail
+                + "。本次比对对象是源仓工作树而非发行副本，此不一致无从裁定实例锁是否失效"
+                "（工作树领先于实例所用副本属交付前常态）；要判锁是否失效，请从该实例实际"
+                "使用的发行副本重跑本校验器。")
+        raise ValueError("发行锁与本发行副本的发行身份不一致: " + detail)
     migration_notes = []
     if "source_path" in lock:
         migration_notes.append(
@@ -91,6 +114,7 @@ def validate(instance_path: Path) -> dict:
     return {
         "status": "PASS",
         "release_id": release["release_id"],
+        "compared_against": {"path": str(PACKAGE_ROOT), "kind": kind},
         "checked": [
             "release-manifest include files",
             "instance manifest",
@@ -111,8 +135,11 @@ def main() -> int:
     try:
         report = validate(args.instance)
     except ValueError as exc:
+        # 报告自带比对对象：任何 FAIL 结论都可被追溯到「拿哪份包比的呢」，
+        # 拿源仓工作树比出来的不一致因此无法被抄成实例锁失效。
+        payload = {"status": "FAIL", "error": str(exc), "compared_against": compared_against()}
         if args.report == "json":
-            print(json.dumps({"status": "FAIL", "error": str(exc)}, ensure_ascii=False))
+            print(json.dumps(payload, ensure_ascii=False))
         else:
             print(f"FAIL: {exc}", file=sys.stderr)
         return 1
@@ -120,6 +147,8 @@ def main() -> int:
         print(json.dumps(report, ensure_ascii=False))
     else:
         print(f"PASS: {report['release_id']}")
+        compared = report["compared_against"]
+        print(f"  比对对象: {compared['kind']} {compared['path']}")
         for note in report["migration_notes"]:
             print(f"  [MIGRATION] {note}")
     return 0

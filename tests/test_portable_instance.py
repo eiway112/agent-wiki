@@ -212,6 +212,62 @@ class PortableInstanceTest(unittest.TestCase):
         lock = self.lock_check(release_b / "scripts" / "validate_release_lock.py", manifest)
         self.assertEqual(lock.returncode, 0, lock.stderr)
 
+    def test_source_tree_mismatch_cannot_certify_lock_invalidation(self):
+        # D 回归：锁钉的是发行副本身份，源仓工作树不是发行物。工作树与实例所在副本分叉
+        # 属交付前常态，此时从工作树比出的不一致只报「与比对对象不同」，不得给出锁失效
+        # 归因；同一实例从其实际使用的发行副本比对必须仍 PASS——判据与约束同层。
+        release = self.base / "release-ahead"
+        build = subprocess.run(["python", str(BUILD), "--output", str(release)],
+                               capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertEqual(build.returncode, 0, build.stderr)
+        skill = release / "SKILL.md"
+        skill.write_bytes(skill.read_bytes() + b"\n")
+        instance = self.base / "instance-ahead"
+        initialize = self.initialize(release / "scripts" / "init_instance.py", instance)
+        self.assertEqual(initialize.returncode, 0, initialize.stderr)
+        manifest = instance / "程序文件" / "配置" / "agent-wiki-instance.json"
+
+        from_tree = self.lock_check(LOCK_VALIDATE, manifest)
+        self.assertEqual(from_tree.returncode, 1, from_tree.stdout + from_tree.stderr)
+        report = json.loads(from_tree.stdout)
+        self.assertEqual(report["status"], "FAIL")
+        self.assertEqual(report["compared_against"]["kind"], "source-working-tree")
+        self.assertIn("源仓工作树", report["error"])
+        self.assertIn("无从裁定实例锁是否失效", report["error"])
+
+        text = subprocess.run(["python", str(LOCK_VALIDATE), "--instance", str(manifest)],
+                              capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertEqual(text.returncode, 1, text.stdout + text.stderr)
+        self.assertIn("无从裁定实例锁是否失效", text.stderr)
+
+        from_copy = self.lock_check(release / "scripts" / "validate_release_lock.py", manifest)
+        self.assertEqual(from_copy.returncode, 0, from_copy.stderr)
+        self.assertEqual(
+            json.loads(from_copy.stdout)["compared_against"]["kind"], "built-release")
+
+    def test_built_release_mismatch_still_certifies_lock_invalidation(self):
+        # 负向守卫：「不给归因」只属于源仓工作树那一侧。发行副本比出的不一致必须照常
+        # 裁定锁失效，不得被新话术一并软化——软化后「锁失效」这一结论在真判据侧永不可得。
+        release = self.base / "release-guard"
+        build = subprocess.run(["python", str(BUILD), "--output", str(release)],
+                               capture_output=True, text=True, encoding="utf-8", env=ENV)
+        self.assertEqual(build.returncode, 0, build.stderr)
+        instance = self.base / "instance-guard"
+        initialize = self.initialize(release / "scripts" / "init_instance.py", instance)
+        self.assertEqual(initialize.returncode, 0, initialize.stderr)
+        manifest = instance / "程序文件" / "配置" / "agent-wiki-instance.json"
+        lock_path = instance / "程序文件" / "配置" / "agent-wiki-release.lock.json"
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+        data["release_id"] = "0" * 64
+        lock_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        result = self.lock_check(release / "scripts" / "validate_release_lock.py", manifest)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "FAIL")
+        self.assertEqual(report["compared_against"]["kind"], "built-release")
+        self.assertIn("本发行副本", report["error"])
+        self.assertNotIn("无从裁定", report["error"])
+
     def test_old_lock_with_source_path_is_tolerated_with_migration_note(self):
         self.assertEqual(self.initialize().returncode, 0)
         lock_path = self.root / "程序文件" / "配置" / "agent-wiki-release.lock.json"
