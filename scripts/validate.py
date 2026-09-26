@@ -709,11 +709,12 @@ def check_green_backtest_staleness(root: Path, errors, warns, skip_reasons):
 
 
 def check_attribution_hit_field(root: Path, errors, warns, skip_reasons):
-    """维度 11：ingest/lint/query 条目须携带非空「**命中:**」字段。
+    """维度 11：ingest/lint/query 条目须携带非空「**命中:**」字段（封闭集口径）。
 
-    归因率（命中 : 未命中）是本库健康度主指标，其分母只能来自逐条登记；
-    字段缺失时"库在自转"与"库在生效"不可区分。本维只裁字段有无与非空，
-    不裁命中真伪——真伪由判断层抽样（说不出被改变的具体决策即未命中）。
+    归因率（命中 : 未命中）是本库健康度主指标。分母 = ingest/lint/query 顶层条目全量，
+    不再依赖被评估者是否写了字段——否则漏登条目既不入分母也不入分子，"库在自转"
+    与"库在生效"不可区分。本维只裁字段有无与非空，不裁命中真伪——真伪由判断层
+    抽样（说不出被改变的具体决策即未命中）。缺登记数单列，便于对账。
     """
     log_file = root / WIKI_DIR / LOG_NAME
     if not log_file.exists():
@@ -722,7 +723,7 @@ def check_attribution_hit_field(root: Path, errors, warns, skip_reasons):
             f"{WIKI_DIR}/{LOG_NAME}: 归因命中 — 操作日志缺失，本维未执行"
             "（归因率无源头数据；SKILL.md 约定该文件为 append-only 登记面）")
         return
-    entries = []  # [日期, 类型, 是否已登记非空字段]
+    entries = []  # [日期, 类型, 是否已登记非空字段, 字段原文值]
     current = None  # 当前生效条目；遇非条目标题重置，字段不得跨章节回填上一条目
     fence = None
     for line in log_file.read_text(encoding="utf-8-sig", errors="replace").splitlines():
@@ -738,7 +739,7 @@ def check_attribution_hit_field(root: Path, errors, warns, skip_reasons):
             continue
         header = LOG_ENTRY_RE.match(line)
         if header:
-            current = [header.group(1), header.group(2), False]
+            current = [header.group(1), header.group(2), False, ""]
             entries.append(current)
             continue
         if re.match(r"^#{1,6}\s", line):
@@ -747,15 +748,19 @@ def check_attribution_hit_field(root: Path, errors, warns, skip_reasons):
         field = HIT_FIELD_RE.match(line)
         if current is not None and field and field.group(1).strip():
             current[2] = True
-    for date, kind, registered in entries:
-        if kind not in ATTRIBUTION_KINDS or registered:
-            continue
-        if date < ATTRIBUTION_FIELD_SINCE:
-            continue
+            current[3] = field.group(1).strip()
+    missing = [e for e in entries
+               if e[1] in ATTRIBUTION_KINDS and not e[2] and e[0] >= ATTRIBUTION_FIELD_SINCE]
+    for date, kind, _registered, _value in missing:
         warns.append(
             f"{WIKI_DIR}/{LOG_NAME}: 归因命中 — [{date}] {kind} 条目缺非空"
             "「**命中:**」字段，归因登记不完整；三型取值见 SKILL.md「Query」节 B 段"
             "（「无命中（缺哪类规则）」是合法值，正文提及字段名不算登记）")
+    total = sum(1 for e in entries if e[1] in ATTRIBUTION_KINDS and e[0] >= ATTRIBUTION_FIELD_SINCE)
+    if total:
+        print(
+            f"  [INFO] 归因命中 — 封闭集 {total} 条，缺登记 {len(missing)} 条"
+            f"（分母=ingest/lint/query 顶层条目全量）", file=sys.stdout)
 
 
 def check_file(fp: Path, root: Path, whitelist, errors, warns):

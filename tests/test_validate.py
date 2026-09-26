@@ -370,7 +370,7 @@ class TestGreenBacktestStaleness(FixtureCase):
 
 
 class TestAttributionHitField(FixtureCase):
-    """维度 11：只裁字段有无与非空，WARN 不阻塞；日志缺失记 SKIP 而非静默 PASS。"""
+    """维度 11：封闭集口径——分母=顶层条目全量，缺登记单列；WARN 不阻塞；日志缺失记 SKIP。"""
 
     LOG = "知识库/操作日志.md"
 
@@ -404,7 +404,7 @@ class TestAttributionHitField(FixtureCase):
                 self.write(self.LOG, self.entry(f"- **命中:** {value}\n"))
                 rc, out = run_validator(self.root)
                 self.assertEqual(0, rc, out)
-                self.assertNotIn("归因命中", out)
+                self.assertNotIn("缺非空", out)
 
     def test_other_entry_cannot_supply_missing_field(self):
         body = (f"# 操作日志\n\n## [{days_ago(0)}] query | 第一项\n无字段\n"
@@ -430,6 +430,26 @@ class TestAttributionHitField(FixtureCase):
         self.assertEqual(0, rc, out)
         self.assertIn("dimension_11_attribution_hit:操作日志.md_missing", out)
         self.assertIn("PASS_WITH_SKIP", out)
+
+    def test_closed_set_denominator_tracks_entry_count(self):
+        """改条数即变数：分母必须随 ingest/lint/query 条目数实时变化，写死常量即被打死。"""
+        body = (f"# 操作日志\n\n"
+                f"## [{days_ago(0)}] ingest | 第一条\n- **命中:** 命中规则A\n\n"
+                f"## [{days_ago(0)}] lint | 第二条\n- **命中:** 命中规则B\n\n"
+                f"## [{days_ago(0)}] query | 第三条\n查了没记\n")
+        self.write(self.LOG, body)
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertIn("封闭集 3 条", out)
+        self.assertIn("缺登记 1 条", out)
+        self.assertIn("query 条目缺非空", out)
+        # 加一条有字段的 query → 封闭集变 4、缺登记仍 1
+        body2 = body + f"\n## [{days_ago(0)}] query | 第四条\n- **命中:** 命中规则C\n"
+        self.write(self.LOG, body2)
+        rc2, out2 = run_validator(self.root)
+        self.assertEqual(0, rc2, out2)
+        self.assertIn("封闭集 4 条", out2)
+        self.assertIn("缺登记 1 条", out2)
 
 
 class TestAdoptionGate(FixtureCase):

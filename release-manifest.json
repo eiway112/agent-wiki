@@ -1,6 +1,6 @@
 {
   "format": "agent-wiki-release/v1",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "include": [
     "SKILL.md",
     "LICENSE.md",
