@@ -86,17 +86,28 @@ agent-wiki/
 ├── SKILL.md              ← 技能主体（复制到技能目录即用）
 ├── README.md
 ├── LICENSE.md            ← MIT
+├── release-manifest.json ← 发行 include 白名单 + 内容根排除（发行身份的唯一清单）
+├── policies/             ← 策略 SOT（core.json；knowledge-collection-workflow.json extends core）
+├── adapters/             ← 平台能力声明（qoder / plain），各自指向注入面模板
+├── templates/            ← 实例 manifest 与注入面占位符模板（<GENERATE_UUID> 等尖括号占位）
 ├── references/
 │   └── rule-template.md  ← 蒸馏产物模板（三出口标准形态）
 ├── scripts/
-│   └── validate.py       ← Evaluator 零依赖示例
-├── tests/
-│   └── test_validate.py  ← 治具自身的红绿双向回归（十一维各造一次违规）
+│   ├── validate.py       ← Evaluator 十一维结构治具（零依赖）
+│   ├── release_contract.py ← release_id 计算（提交内容的纯函数，LF 归一后哈希）
+│   ├── build_release.py  ← 按白名单构建不含实例内容的发行包
+│   ├── validate_release_lock.py ← 实例侧发行锁校验（不读知识内容）
+│   └── init_instance.py  ← 从包初始化零内容实例
+├── tests/                ← 治具自身的红绿双向回归（十一维各造一次违规）
+│   ├── test_validate.py
+│   └── test_portable_instance.py
 └── examples/             ← 最小可跑通样本知识库
     ├── 原始采集/文章/
-    ├── 知识库/目录.md + 蒸馏卡基线样张 + 落地台账.md（机器生成）
+    ├── 知识库/目录.md + 操作日志.md + 蒸馏卡基线样张 + 落地台账.md（机器生成）
     └── 程序文件/配置/来源白名单.json + 注入面.json（占位符模板）
 ```
+
+随包与不随包的取舍只以 `release-manifest.json` 的 include 白名单为判据（漏列即静默不发行）：`policies/`、`templates/`、`adapters/` 随包发行，其中 `policies/` 是策略 SOT，`init_instance.py` 按 `policies/{policy_id}.json` 取源复制为实例的 `程序文件/配置/agent-wiki-policy.json`；`tests/` 是治具自身的红绿双向回归，不随包发行。
 
 ## 设计原则
 
