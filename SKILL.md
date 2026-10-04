@@ -270,3 +270,4 @@ Query 有两个时点，**缺任一即视为本库在该任务上未生效**（"
 - commit message：`{ingest|query|lint}: {简述}`；初始化：`init: 知识库基线`
 - 踩坑教训结构化记入 `采集经验.md`，不混入操作日志
 - 蒸馏卡：`蒸馏卡_{topic}_{date}.md`，格式见 `references/rule-template.md`，适用边界/来源指针必填
+- 包内目录（出生即声明）：`policies/`＝结构门禁策略 JSON，validate 治具的 cross_file_dimensions 与 required_capabilities 单源；`templates/`＝实例清单与注入面模板 JSON（instance-manifest / injection-surface），供 adapters 渲染；`tests/`＝随包 pytest 回归（治具行为、便携实例）
