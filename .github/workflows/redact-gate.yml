@@ -43,10 +43,21 @@ jobs:
             exit 1
           fi
           echo "::add-mask::$GATE_REPO_TOKEN"
+          # 值形体检：只报长度与是否含空白，不打印内容——公开仓的日志本身是公开的，
+          # 仓名走 secret 正是为了不落进公开面。
+          trimmed=$(printf '%s' "$GATE_SRC_REPO" | tr -d ' \t\n\r')
+          if [ "$trimmed" = "$GATE_SRC_REPO" ]; then shape=纯; else shape="含空白字符（会拼坏URL）"; fi
+          echo "GATE_SRC_REPO 长度=${#GATE_SRC_REPO} 形制=$shape"
+          api=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GATE_REPO_TOKEN" \
+                "https://api.github.com/repos/${GATE_SRC_REPO}" || echo curl失败)
+          echo "令牌对该仓的 API 读数=$api（200 可见／401 令牌无效／403 或 404 作用域不含该仓或仓名不符）"
           DEST="$RUNNER_TEMP/gate-src"
-          if ! git clone --quiet --depth 1 \
-               "https://x-access-token:${GATE_REPO_TOKEN}@github.com/${GATE_SRC_REPO}" "$DEST"; then
-            echo "::error::取门禁单源失败（token 失效/作用域不含该仓/仓名不符/网络）。按未测处理，不放行。"
+          err=$(git clone --quiet --depth 1 \
+                  "https://x-access-token:${GATE_REPO_TOKEN}@github.com/${GATE_SRC_REPO}" "$DEST" 2>&1) \
+            && rc=0 || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            one=$(printf '%s' "$err" | tr '\n\r\t' '   ' | cut -c1-160)
+            echo "::error::取门禁单源失败 诊断 api=$api clone_rc=$rc git原话=${one}；按未测处理，不放行。"
             exit 1
           fi
           GATE="$DEST/程序文件/脚本/publish_export_gate.py"
