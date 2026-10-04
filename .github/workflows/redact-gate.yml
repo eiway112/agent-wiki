@@ -1,0 +1,93 @@
+# 发布面脱敏门禁 · 服务端 required check
+#
+# 母本住根仓 `_工具/ci/redact-gate.yml`；安装＝逐仓一条：
+#   cp "_工具/ci/redact-gate.yml" <公开仓>/.github/workflows/redact-gate.yml
+#
+# 存在理由：本机 `pre-push` 钩子只是反馈层——可被 `--no-verify` 绕过，也被实测过另一种绕过：
+# `git push ... 2>&1 | head -40` 这类截断式管道让钩子收 SIGPIPE 死亡、git 拿不到它的 exit 1 照推
+# （2026-10-04 PL-142 取证结论）。服务端判定不受推送方进程管束，是这条链唯一的真咽喉点。
+#
+# 依赖（缺失即失败，不设静默开关）：两个仓库 secret
+#   `GATE_REPO_TOKEN` ＝ 对门禁单源私有仓只读的 fine-grained PAT；
+#   `GATE_SRC_REPO`    ＝ 该私有仓的 `owner/name`（如 eiway112/video-workflow）。
+#   仓名走 secret 而非明文写进本文件：公开面里出现私有仓标识本身就是门禁要拦的那类信息，
+#   而它没被扫中只说明词表尚未收这个词，不说明这里安全。
+#   门禁脚本与词表一律从该单源取，**本仓不存副本**：副本会漂移，而漂移的门禁比没有门禁更坏
+#   ——它会给出一个"扫过了"的绿色读数，扫的却是另一份判据。
+name: redact-gate
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 从单源私有仓取门禁脚本与词表
+        env:
+          GATE_REPO_TOKEN: ${{ secrets.GATE_REPO_TOKEN }}
+          GATE_SRC_REPO: ${{ secrets.GATE_SRC_REPO }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GATE_REPO_TOKEN:-}" ] || [ -z "${GATE_SRC_REPO:-}" ]; then
+            echo "::error::secret GATE_REPO_TOKEN 或 GATE_SRC_REPO 未配置＝门禁未接入。未接入不得读成通过。"
+            exit 1
+          fi
+          echo "::add-mask::$GATE_REPO_TOKEN"
+          DEST="$RUNNER_TEMP/gate-src"
+          if ! git clone --quiet --depth 1 \
+               "https://x-access-token:${GATE_REPO_TOKEN}@github.com/${GATE_SRC_REPO}" "$DEST"; then
+            echo "::error::取门禁单源失败（token 失效/作用域不含该仓/仓名不符/网络）。按未测处理，不放行。"
+            exit 1
+          fi
+          GATE="$DEST/程序文件/脚本/publish_export_gate.py"
+          TERMS="$DEST/程序文件/配置/config_dev/publish_redact_terms.json"
+          test -f "$GATE"  || { echo "::error::门禁脚本不在单源预期路径"; exit 1; }
+          test -f "$TERMS" || { echo "::error::词表不在单源预期路径"; exit 1; }
+          {
+            echo "GATE=$GATE"
+            echo "TERMS=$TERMS"
+            echo "GATE_SHA256=$(sha256sum "$GATE" | cut -c1-12)"
+            echo "TERMS_SHA256=$(sha256sum "$TERMS" | cut -c1-12)"
+          } >> "$GITHUB_ENV"
+
+      - name: 跑门禁（PASS 之外一律失败）
+        run: |
+          set -euo pipefail
+          echo "本次判据＝单源门禁 ${GATE_SHA256} / 词表 ${TERMS_SHA256}"
+          # 门禁自身 exit：0=PASS 1=命中 2=未测；词表缺失/不可解析亦落 2，故"扫不了"不会是绿色
+          python "$GATE" --repo "$GITHUB_WORKSPACE" --terms "$TERMS" --json gate.json
+
+      - name: 读数摘要
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          p = "gate.json"
+          if not os.path.exists(p):
+              print("::error::门禁未产出 gate.json＝未跑成，按未测处理"); sys.exit(1)
+          d = json.loads(open(p, encoding="utf-8").read())
+          v = d.get("verdict")
+          print(f"verdict={v} scanned={d.get('scanned')} hits={len(d.get('hits') or [])} "
+                f"exempted={d.get('exempted')} untested={len(d.get('untested') or [])} "
+                f"terms_loaded={d.get('terms_loaded')}")
+          for h in (d.get("hits") or [])[:40]:
+              print(f"::error file={h.get('file')}::命中 {h.get('kind')} @ {h.get('line')}")
+          sys.exit(0 if v == "PASS" else 1)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: redact-gate-reading
+          path: gate.json
+          if-no-files-found: error
