@@ -1,6 +1,11 @@
 ---
 name: agent-wiki
+display_name: 智能体知识库运营（LLM Wiki 模式）
+display_name_en: Agent Wiki — LLM Wiki Knowledge Base Operations
+version: 1.6.0
 description: 按 Karpathy LLM Wiki 模式运营智能体知识库：Ingest 采集入库（命中预登记、价值契约、价值判定与中止、质量过滤器、蒸馏落地状态标记）、Query 走任务必经路径（开工前检索既有 🟢/🟡 规则集、交付时登记命中归因、好答案回填）、Lint 体检（结构层多维+判断层回测，🟢 回测到期由治具机算），并执行 Planner/Generator/Evaluator 角色分离。核心流程与采集工具解耦，可跨平台移植。当用户要求采集文章/素材入库、摄入新知识、查询知识库、知识库体检/lint、蒸馏知识为 Memory/规范/Skill，或运营任何 LLM Wiki 式知识库时使用。**此外，开始一项非平凡任务（制定方案、改架构、建结构、做评审、排障复盘）前也应主动检索本库既有规则，交付时登记命中或未命中——不等用户点名知识库。**
+description_zh: 把外部文章、讨论与视频蒸馏成智能体运行时真正会调用的行为规则，提供可机检的入库质量过滤器、命中归因登记与知识库体检流程。方法论与采集工具、智能体平台解耦，附可直接跑通的最小样本。
+description_en: Distill articles, discussions and videos into behavioral rules an agent actually consumes at runtime, with machine-checkable ingest quality gates, attribution registration and knowledge-base linting. The methodology is decoupled from collection tools and agent platforms, and includes a compact worked example.
 ---
 
 # 知识库运营工作流（LLM Wiki 模式）
@@ -276,4 +281,4 @@ Query 有两个时点，**缺任一即视为本库在该任务上未生效**（"
 - commit message：`{ingest|query|lint}: {简述}`；初始化：`init: 知识库基线`
 - 踩坑教训结构化记入 `采集经验.md`，不混入操作日志
 - 蒸馏卡：`蒸馏卡_{topic}_{date}.md`，格式见 `references/rule-template.md`，适用边界/来源指针必填
-- 包内目录（出生即声明）：`policies/`＝结构门禁策略 JSON，validate 治具的 cross_file_dimensions 与 required_capabilities 单源；`templates/`＝实例清单与注入面模板 JSON（instance-manifest / injection-surface），供 adapters 渲染；`tests/`＝随包 pytest 回归（治具行为、便携实例）
+- 包内目录（出生即声明）：`policies/`＝结构门禁策略 JSON，validate 治具的 cross_file_dimensions 与 required_capabilities 单源；`templates/`＝实例清单与注入面模板 JSON（instance-manifest / injection-surface），供 adapters 渲染。回归测试（治具行为、便携实例）属仓内侧，不进发行清单

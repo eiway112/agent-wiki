@@ -57,6 +57,15 @@ python scripts/validate.py examples
 
 比对对象是**校验器自身所在的那份包**，PASS 与 FAIL 报告都以 `compared_against` 自述其路径与形态（`built-release` / `source-working-tree`，按 `release.json` 有无机检）。锁钉的是发行副本身份，所以判「实例锁是否失效」必须从该实例实际使用的发行副本（带 `release.json` 的那份）运行本脚本。从源仓工作树裸跑比出的是「工作树 vs 锁」之差：工作树领先于生效副本属交付前常态，此时脚本仍报 FAIL（不一致是事实，不予软化），但明确声明该不一致**无从裁定锁是否失效**并拒绝给出归因，不得据此登记锁失效或提前重钉。
 
+### 第三方发布平台的层级变体
+
+部分技能发布平台限制包内目录层级（Workbuddy 实测判据：自压缩包根起最多两级目录），而本仓发行物含三级路径（`examples/原始采集/文章/`、`examples/程序文件/配置/`）。为该这类平台上传时按下面两条机械变换生成变体；变换只发生在发布副本上，不改本仓布局与本仓发行清单。
+
+1. 超层的样本提一级（如 `examples/程序文件/配置/注入面.json` → `examples/程序文件/注入面.json`），文件字节不变，一个样本都不删。
+2. 变体不发行 `release-manifest.json` 与 `release.json`：两者按本仓路径枚举，提层后即与包内实际布局不符，留在包内即属失实自述。代价是变体的 `release_id` 无从由包内清单重算，因此**变体不得用于发行锁校验或实例初始化**，要跑这两样须回到本仓 `scripts/build_release.py` 构建的发行副本。
+
+发布面还要求 `SKILL.md` frontmatter 携带 `version` / `display_name` / `display_name_en` / `description_zh` / `description_en`（缺任一即平台侧解析失败）；其中 `version` 与本仓 `release-manifest.json` 的等值由 `tests/test_portable_instance.py` 的 frontmatter 守卫机检，单源仍是发行清单。
+
 ## Evaluator 示例（scripts/validate.py）
 
 零依赖（仅 Python 3 标准库），覆盖 Lint 结构层十一维：

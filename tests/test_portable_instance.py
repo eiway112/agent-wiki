@@ -510,6 +510,37 @@ class ReleaseManifestSelfConsistencyTest(unittest.TestCase):
         shrunk = {i for i in self.include if not i.startswith("examples/")}
         self.assertIn("SKILL.md -> examples/", self.unshipped_pointers(shrunk))
 
+    IDENTITY_KEYS = ("name", "version", "display_name", "display_name_en",
+                     "description", "description_zh", "description_en")
+
+    def frontmatter_fields(self, text: str) -> dict:
+        block = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+        self.assertIsNotNone(block, "SKILL.md 缺少 frontmatter")
+        return dict(re.findall(r"^([a-z_]+): (.*)$", block.group(1), re.M))
+
+    def assert_identity_fields(self, fields: dict):
+        for key in self.IDENTITY_KEYS:
+            self.assertTrue(fields.get(key, "").strip(), f"frontmatter 缺 {key}")
+        manifest_version = json.loads(
+            (PACKAGE_ROOT / "release-manifest.json").read_text(encoding="utf-8"))["version"]
+        self.assertEqual(manifest_version, fields.get("version"),
+                         "SKILL.md frontmatter version 与发行清单不一致")
+
+    def test_skill_frontmatter_carries_platform_identity_fields(self):
+        # 发布面按 SKILL.md frontmatter 生成技能身份，缺字段即平台侧「解析失败」。
+        # version 以发行清单为单源，frontmatter 须等值——两处不等即手抄漂移。
+        text = (PACKAGE_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assert_identity_fields(self.frontmatter_fields(text))
+
+    def test_guard_fails_on_missing_frontmatter_field(self):
+        # 负向注入：删字段须让同一条守卫变红，否则该守卫为空跑
+        text = (PACKAGE_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        for key in ("display_name_en", "description_en", "version"):
+            stripped = re.sub(rf"^{key}: .*$\n", "", text, flags=re.M)
+            self.assertNotEqual(stripped, text, f"注入未命中 {key}，负向案为空跑")
+            with self.assertRaises(self.failureException):
+                self.assert_identity_fields(self.frontmatter_fields(stripped))
+
 
 class ReleaseIdentityEolInvarianceTest(unittest.TestCase):
     """release_id 须为提交内容的纯函数：同内容不同换行形态产出同一身份，否则跨机零内容漂移误报锁不一致。"""
