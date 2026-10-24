@@ -3,7 +3,7 @@
   "id": "core",
   "version": "1.0.0",
   "description": "跨平台知识库的通用结构门禁。",
-  "cross_file_dimensions": [8, 9, 16, 17],
+  "cross_file_dimensions": [8, 9, 10, 11],
   "required_capabilities": {
     "persistent_memory": true,
     "independent_evaluator": true

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""agent-wiki Evaluator 示例：知识库十一维校验治具（零依赖，仅标准库）
+"""agent-wiki Evaluator 示例：知识库十六维校验治具（零依赖，仅标准库）
 
 用法:
     python scripts/validate.py <知识库根目录>
     python scripts/validate.py <知识库根目录> --refresh-landing-ledger
 
-十一维校验（结构层 1-9；10/11 为判断层回测与归因的机检臂，不替代人工裁定）:
+十六维校验（结构层 1-9 与 12-16；10/11 为判断层回测与归因的机检臂，不替代人工裁定）:
     1. 元数据完整性 — 元数据区须含 URL/采集时间/采集命令 的非空字段值 (ERROR)
     2. 编码正确性   — UTF-8 可解码、无 U+FFFD、无双重编码签名      (ERROR)
     3. 格式规范性   — Markdown H1 开头、--- 分隔；JSON _metadata 非空且含必填字段 (ERROR)
@@ -18,6 +18,18 @@
     9. 目录台账一致性 — 目录.md 引用的蒸馏卡与落地台账对账          (ERROR/WARN)
    10. 🟢 回测到期   — 距最近合格回测超窗口判 ERROR；围栏示例不算记录 (ERROR/WARN)
    11. 归因命中字段 — ingest/lint/query 条目须有非空「**命中:**」，他节不回填 (WARN)
+   12. 文本形态     — 原始采集件须自标与上游的文本关系；逐字档须附可复算凭据 (ERROR)
+   13. 归因引用     — 卡内「原文X」句不得只由非逐字档支撑                  (ERROR/WARN)
+   14. 蒸馏卡义务   — 目录中标 🟢/🟡 的条目须有对应蒸馏卡                  (ERROR)
+   15. 待处置 TTL   — PENDING-TTL 到期日须为绝对日期，过期未处置告警       (ERROR/WARN)
+   16. 备份新鲜度   — 最新 bundle 落后 HEAD 超阈值告警                      (WARN)
+
+维度 12-16 的采用门控（未声明即无义务，SKIP 必须记账）:
+    12/13 仅在实例内至少一件 raw 携带「文本形态」时生效（否则记 not_adopted）；
+    14 在实例无蒸馏卡时记 not_adopted；15 在实例无 项目规范.md 时记 not_adopted，
+    文件在而块缺失且文中出现 PENDING-TTL 判 ERROR（强制器本体被删即本维存在意义）；
+    16 在实例清单未声明 backup.bundle_directory 时记 not_adopted，目录不可达记
+    WARN[UNCOVERED]——不可核不等于通过。
 
 维度 10/11 的判据边界（越界即越权，猜真伪不如记不可判）:
     维度 10 只求值「距最近一条三要素齐全记录的天数」，不裁执行者是否真独立、
@@ -62,6 +74,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import tempfile
 from datetime import datetime
@@ -120,6 +133,34 @@ LOG_ENTRY_RE = re.compile(r"^## \[(\d{4}-\d{2}-\d{2})\]\s+(\w+)\s*\|")
 HIT_FIELD_RE = re.compile(r"^\s*(?:-[ \t]+)?\*\*命中(?:[：:]\*\*|\*\*[：:])[ \t]*(.*)$")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
+# ---------- 维度 12-16：源保真与治理账（2026-10-24 自实例治具回迁）----------
+# 五维曾在实例侧治具实现，随「单一机制源」切换（275f1aa）失去机检承担者。
+# 回迁保留原判据与克制边界：只裁字段有无、闭集取值与指针档位，不猜语义真伪。
+TEXT_FORM_FIELD = "文本形态"
+EVIDENCE_FIELD = "取证凭据"
+TEXT_FORM_VERBATIM = ("逐字全文", "逐字节选")
+TEXT_FORM_DERIVED = ("转写摘要", "检索汇编", "内部产物", "待核")
+TEXT_FORM_VALUES = TEXT_FORM_VERBATIM + TEXT_FORM_DERIVED
+# 逐字档授予「原文X」终据资格，故须可证伪；待核只要求非空——它不授予任何信任。
+EVIDENCE_REQUIRED_FORMS = TEXT_FORM_VERBATIM + ("待核",)
+ANCHORED_RE = re.compile(r"https?://|(?<![0-9a-f])[0-9a-f]{7,}(?![0-9a-f])")
+# 件内锚点：凭据可写「值见『采集者注』第 2 条表」——锚点在同件表格里，仍可机器复算。
+# 只认十六进制锚（blob/sha 前缀），不认 URL：每件都有来源 URL，认 URL 会让本判据空转。
+# 边界用前后不邻十六进制而不是 \b：sha256 有 64 位，{7,40} + 尾 \b 会让长锚点整体失配。
+DOC_ANCHOR_RE = re.compile(r"(?<![0-9a-f])[0-9a-f]{7,}(?![0-9a-f])")
+EVIDENCE_POINTER_RE = re.compile(r"值见|见「|见上|同上|下表|第\s*\d+\s*条表|定界行|见表")
+# 豁免：上游原件逐字节副本插入元数据行即摧毁逐字性；其余后缀无元数据区约定。
+TEXT_FORM_EXEMPT_SUFFIXES = {".py", ".html", ".htm", ".csv", ".txt", ".yaml", ".yml"}
+ATTRIBUTION_RE = re.compile(r"原文(?:说|写道|写作|称|表述|类比|明确|标注|指出|强调|认为)")
+CARD_OBLIGATION_SINCE = "2026-08-17"
+SPEC_NAME = "项目规范.md"
+PENDING_TTL_RE = re.compile(
+    r"<!--\s*PENDING-TTL BEGIN\s*-->(.*?)<!--\s*PENDING-TTL END\s*-->", re.S)
+PENDING_ACTIVE_STATUSES = ("待处置", "待裁定")
+BACKUP_MAX_LAG_COMMITS = 20
+BUNDLE_TAG_RE = re.compile(r"_([0-9a-f]{7})\.bundle$")
+INSTANCE_MANIFEST_REL = Path("程序文件") / "配置" / "agent-wiki-instance.json"
+
 # ---------- 维度登记表（覆盖率账的唯一机器源）----------
 # 新增维度必须登记于此：required_checks 由本表推导，不再硬编码计数。
 # 「被 main() 调用但不在任何账上」的维度会让覆盖率账从完备枚举退化为部分枚举，
@@ -136,6 +177,11 @@ DIMENSIONS = (
     (9, "目录台账一致性"),
     (10, "🟢 回测到期"),
     (11, "归因命中字段"),
+    (12, "文本形态"),
+    (13, "归因引用"),
+    (14, "蒸馏卡义务"),
+    (15, "待处置 TTL"),
+    (16, "备份新鲜度"),
 )
 
 
@@ -763,12 +809,326 @@ def check_attribution_hit_field(root: Path, errors, warns, skip_reasons):
             f"（分母=ingest/lint/query 顶层条目全量）", file=sys.stdout)
 
 
-def check_file(fp: Path, root: Path, whitelist, errors, warns):
+# ---------- 维度 12-16：源保真与治理账 ----------
+
+def raw_meta_value(fp: Path, field: str):
+    """读取一件的指定元数据值：.md 走元数据区，.json 走 _metadata；读不到返回 None。
+
+    复用 meta_field_value 的行解析，避免为列表形态（`- 字段: 值`）再写一份正则。
+    """
+    try:
+        content = fp.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return None
+    if fp.suffix.lower() == ".json":
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+        meta = data.get("_metadata") if isinstance(data, dict) else None
+        if not isinstance(meta, dict):
+            return None
+        for key, value in meta.items():
+            if key.lower() == field.lower():
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+                return None
+        return None
+    sep = re.search(r"(?m)^---\s*$", content)
+    block = content[:sep.start()] if sep else content
+    return meta_field_value(block, field)
+
+
+def text_form_adopted(root: Path) -> bool:
+    """维度 12/13 的采用门控：实例内至少一件 raw 自标文本形态才生效。
+
+    未采用的新库不应因缺字段被判 ERROR；一旦采用，义务覆盖全部 raw——
+    「只填自己那件」不是采用，而是遗漏。
+    """
+    raw = root / RAW_DIR
+    if not raw.is_dir():
+        return False
+    for fp in raw.rglob("*"):
+        if fp.is_file() and fp.suffix.lower() in (".md", ".json") \
+                and raw_meta_value(fp, TEXT_FORM_FIELD):
+            return True
+    return False
+
+
+def text_form_token(value: str):
+    """取值须以闭集档位开头，其后可用括号补充范围限定（如「逐字节选（摘要一件）」）。
+
+    限定语只缩窄适用范围、不改变档位；「基本逐字」式自造档位仍不作数。
+    返回闭集档位或 None——归因引用维用同一求值，避免两处各写一份前缀规则。
+    """
+    for token in sorted(TEXT_FORM_VALUES, key=len, reverse=True):
+        if value == token or value.startswith(token + "（") or value.startswith(token + "("):
+            return token
+    return None
+
+
+def evidence_anchored(fp: Path, evidence: str) -> bool:
+    """凭据是否指名可复算对象：字段内含锚点，或指向件内锚点表格且件内确有十六进制锚。"""
+    if ANCHORED_RE.search(evidence):
+        return True
+    if not EVIDENCE_POINTER_RE.search(evidence):
+        return False
+    try:
+        content = fp.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return False
+    return bool(DOC_ANCHOR_RE.search(content))
+
+
+def check_text_form(fp: Path, rel: Path, errors, exempt):
+    """维度 12：raw 须自标文本形态；逐字档与「待核」另须附可复算取证凭据。
+
+    刻意不经文件类型分派：视频/讨论目录的转写本正是 E014 那批假归因的来源，
+    形态声明对全部 raw 一体适用才拦得住。判档从严——只有字节级可复核通道才是
+    逐字档；工具自述「全文落盘」而无字节链的一律 待核。
+    """
+    suffix = fp.suffix.lower()
+    if suffix in BINARY_EXTENSIONS:
+        exempt.append(("二进制无文本层", rel.name))
+        return
+    if suffix in TEXT_FORM_EXEMPT_SUFFIXES:
+        exempt.append(("上游原件逐字节副本", rel.name))
+        return
+    if suffix not in (".md", ".json"):
+        exempt.append(("无元数据区约定", rel.name))
+        return
+    value = raw_meta_value(fp, TEXT_FORM_FIELD)
+    if value is None:
+        errors.append(
+            f"{rel}: 文本形态 — 原始采集件缺少必需元数据字段「{TEXT_FORM_FIELD}」；"
+            f"以 `{TEXT_FORM_FIELD}: 值` 补在元数据区（JSON 写 _metadata），"
+            f"取值限 {' / '.join(TEXT_FORM_VALUES)}")
+        return
+    token = text_form_token(value)
+    if token is None:
+        errors.append(
+            f"{rel}: 文本形态 — 取值非法「{value}」；须以闭集档位开头 "
+            f"（{' / '.join(TEXT_FORM_VALUES)}），可在括号内补范围限定，"
+            "「基本逐字」式模糊档位不作数")
+        return
+    if token not in EVIDENCE_REQUIRED_FORMS:
+        return
+    evidence = raw_meta_value(fp, EVIDENCE_FIELD)
+    if not evidence:
+        errors.append(
+            f"{rel}: 取证凭据 — 「{value}」件缺少必需元数据字段「{EVIDENCE_FIELD}」；"
+            "写明与哪个锚点比过、比对方规模、归一配方与比对日期")
+        return
+    if token in TEXT_FORM_VERBATIM and not evidence_anchored(fp, evidence):
+        errors.append(
+            f"{rel}: 取证凭据 — 「{value}」件的凭据未指名可复算对象"
+            "（既无 URL/十六进制锚点，也未指向件内锚点表格）；"
+            "散文式「经复核一致」不可证伪")
+
+
+def check_attribution_grounding(root: Path, errors, warns, skip_reasons):
+    """维度 13：卡内「原文X」句不得只由非逐字档支撑（只裁全非逐字，不猜句子出处）。
+
+    同卡逐字档与非逐字档并存时判 WARN 移交人工复核——治具不猜该句出自哪一件，
+    猜即越界引入判断层；静默放行则把歧义记成通过。
+    """
+    if not text_form_adopted(root):
+        skip_reasons.append("dimension_13_attribution_grounding:text_form_not_adopted")
+        return
+    for card in iter_cards(root):
+        body = card.read_text(encoding="utf-8-sig", errors="replace")
+        phrases = sorted(set(ATTRIBUTION_RE.findall(body)))
+        if not phrases:
+            continue
+        raws = []
+        for link in LINK_RE.findall(body):
+            if link.startswith(("http://", "https://")) or RAW_DIR not in link:
+                continue
+            target = (card.parent / link.split("#", 1)[0]).resolve()
+            if target.is_file():
+                raws.append(target)
+        if not raws:
+            continue  # 无可解析 raw 指针：缺证据归维度 5，不重复记账
+        forms = {p.name: (raw_meta_value(p, TEXT_FORM_FIELD) or "（缺失）") for p in raws}
+        tokens = {n: text_form_token(v) for n, v in forms.items()}
+        verbatim = {n: v for n, v in forms.items() if tokens[n] in TEXT_FORM_VERBATIM}
+        nonverb = {n: v for n, v in forms.items() if tokens[n] not in TEXT_FORM_VERBATIM}
+        phrase_text = "、".join(phrases)
+        if not verbatim:
+            errors.append(
+                f"{WIKI_DIR}/{card.name}: 归因引用 — 卡内含「原文X」式归因句"
+                f"（{phrase_text}），所链 raw 全为非逐字档（"
+                + "; ".join(f"{n}={v}" for n, v in sorted(forms.items()))
+                + "）；处置二选一：①把归因句改写为「转写本表述，未经上游逐字核验」；"
+                "②补采上游逐字件并改链")
+        elif nonverb:
+            warns.append(
+                f"{WIKI_DIR}/{card.name}: 归因引用 — 同卡混档：卡内有「原文」表述，"
+                "所链 raw 逐字档与非逐字档并存，归因句归属需人工复核"
+                "（逐字档: " + str(sorted(verbatim))
+                + "；非逐字档: " + "; ".join(f"{n}={v}" for n, v in sorted(nonverb.items()))
+                + "）")
+
+
+def check_card_obligation(root: Path, errors, warns, skip_reasons):
+    """维度 14：目录中标 🟢/🟡 的条目须有对应蒸馏卡（模板约定「落地必产卡」）。
+
+    只追溯 CARD_OBLIGATION_SINCE 之后入库的条目：更早存量属模板诞生前，
+    强行补卡只会催生凑数卡片。卡在条目块内以 `蒸馏卡_` 文件名出现即算有卡。
+    """
+    if not iter_cards(root):
+        skip_reasons.append("dimension_14_card_obligation:no_cards")
+        return
+    index_file = root / WIKI_DIR / "目录.md"
+    if not index_file.exists():
+        return  # 缺入口由维度 5 报
+    content = index_file.read_text(encoding="utf-8-sig", errors="replace")
+    for block in re.split(r"(?m)^### ", content)[1:]:
+        title = re.sub(r"\]\([^)]*\)", "", block.splitlines()[0].strip()).strip("[]*` ")
+        m_date = re.search(r"\*\*入库日期:\*\*\s*(\d{4}-\d{2}-\d{2})", block)
+        if not m_date or m_date.group(1) < CARD_OBLIGATION_SINCE:
+            continue
+        if not re.search(r"`🟢 已落地`|`🟡 部分落地`", block):
+            continue
+        if CARD_PREFIX in block:
+            continue
+        errors.append(
+            f"{WIKI_DIR}/目录.md#{title[:24]}: 蒸馏卡 — 条目「{title[:40]}」标 🟢/🟡 "
+            f"但无对应蒸馏卡（入库 {m_date.group(1)}）；按 references/rule-template.md "
+            "补卡（须含非空「适用边界」「来源指针」）并在该条目内建立链接")
+
+
+def check_pending_ttl(root: Path, errors, warns, skip_reasons):
+    """维度 15：PENDING-TTL 账的到期日须为绝对日期，过期未处置逐条告警。
+
+    默认动作=维持现状并告警，绝不默认放行——静默放行会让「未决」悄悄变成「已决」。
+    块存在而文中提及 PENDING-TTL 却找不到块，判 ERROR：强制器本体被删即本维存在意义。
+    """
+    spec = root / SPEC_NAME
+    if not spec.is_file():
+        skip_reasons.append("dimension_15_pending_ttl:spec_missing")
+        return
+    text = spec.read_text(encoding="utf-8-sig", errors="replace")
+    block = PENDING_TTL_RE.search(text)
+    if not block:
+        if "PENDING-TTL" in text:
+            errors.append(
+                f"{SPEC_NAME}: 待处置TTL — PENDING-TTL 机器可读块缺失"
+                "（强制器本体被删即为本维存在意义）；恢复块或记录撤账裁定")
+        else:
+            skip_reasons.append("dimension_15_pending_ttl:not_adopted")
+        return
+    today = datetime.now().strftime("%Y-%m-%d")
+    rows = 0
+    for line in block.group(1).splitlines():
+        line = line.strip()
+        if not line.startswith("|") or "事项" in line or set(line) <= set("|-: "):
+            continue
+        cols = [c.strip() for c in line.strip("|").split("|")]
+        if len(cols) < 6:
+            continue
+        if len(cols) > 6:
+            # 单元格内未转义竖线会让「到期日/状态」整体错位，比到期未处置更早失真
+            errors.append(
+                f"{SPEC_NAME}: 待处置TTL — 行结构非法（单元格内含未转义 `|`）："
+                f"{cols[0][:30]}；改用全角「｜」或 `\\|` 转义")
+            continue
+        rows += 1
+        item, due, status = cols[0], cols[3], cols[5]
+        if not re.match(r"\d{4}-\d{2}-\d{2}$", due):
+            errors.append(
+                f"{SPEC_NAME}: 待处置TTL — 「{item[:24]}」到期日非绝对日期: {due!r}"
+                "（相对日期落笔即换算）")
+            continue
+        if status in PENDING_ACTIVE_STATUSES and due < today:
+            warns.append(
+                f"{SPEC_NAME}: 待处置TTL — TTL 超期：「{item[:30]}」到期 {due}，"
+                f"今日 {today} 仍标「{status}」；默认动作=维持现状并告警，"
+                "或由 Planner 显式改状态/展期")
+    if rows == 0:
+        print("  [INFO] 待处置 TTL — 账本为空（[UNCOVERED]）：无待处置须与实况对读",
+              file=sys.stdout)
+
+
+def backup_bundle_dir(root: Path):
+    """实例清单声明的 bundle 目录；未声明返回 (None, 跳过原因)。"""
+    manifest = root / INSTANCE_MANIFEST_REL
+    if not manifest.is_file():
+        return None, "instance_manifest_missing"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, "instance_manifest_unreadable"
+    backup = ((data.get("policy_settings") or {}).get("backup") or {})
+    value = backup.get("bundle_directory")
+    if not isinstance(value, str) or not value.strip():
+        return None, "backup_dir_not_declared"
+    path = Path(value)
+    return (path if path.is_absolute() else root / path), None
+
+
+def git_output(root: Path, *args):
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=root, capture_output=True, text=True,
+            encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def check_backup_freshness(root: Path, errors, warns, skip_reasons):
+    """维度 16：最新 bundle 落后 HEAD 超阈值告警。
+
+    backup_bundle.py 只在被调用时保护，「长期不跑」这一失败模式必须由每次提交
+    都经过的门禁观测。目录/标记不可核记 [UNCOVERED]，不静默算通过。
+    """
+    bundle_dir, skip = backup_bundle_dir(root)
+    if skip:
+        skip_reasons.append(f"dimension_16_backup_freshness:{skip}")
+        return
+    if not bundle_dir.is_dir():
+        warns.append(
+            f"{bundle_dir}: 备份新鲜度 — 备份目录不可达 [UNCOVERED]，滞后量未核"
+            "（不可核不等于通过）")
+        return
+    bundles = sorted(bundle_dir.glob("*.bundle"), key=lambda p: p.name)
+    if not bundles:
+        warns.append(f"{bundle_dir}: 备份新鲜度 — 备份目录内无 bundle 副本")
+        return
+    tag = BUNDLE_TAG_RE.search(bundles[-1].name)
+    if not tag:
+        warns.append(
+            f"{bundles[-1].name}: 备份新鲜度 — 最新 bundle 文件名无 7 位 HEAD 标记 "
+            "[UNCOVERED]，滞后量未核")
+        return
+    if git_output(root, "rev-parse", "HEAD") is None:
+        warns.append(f"{bundle_dir}: 备份新鲜度 — git 不可用 [UNCOVERED]，滞后量未核")
+        return
+    count = git_output(root, "rev-list", "--count", f"{tag.group(1)}..HEAD")
+    if count is None or not count.isdigit():
+        warns.append(
+            f"{bundle_dir}: 备份新鲜度 — 最新 bundle 标记 {tag.group(1)} 相对 HEAD "
+            "不可计（不在当前历史）[UNCOVERED]，滞后量未核")
+        return
+    lag = int(count)
+    if lag > BACKUP_MAX_LAG_COMMITS:
+        warns.append(
+            f"{bundle_dir}: 备份新鲜度 — 最新备份落后 HEAD {lag} 提交"
+            f"（阈值 {BACKUP_MAX_LAG_COMMITS}）；运行程序文件/脚本/backup_bundle.py 补备份")
+
+
+def check_file(fp: Path, root: Path, whitelist, errors, warns,
+               text_form_enabled: bool = False, text_form_exempt=None):
     rel = fp.relative_to(root)
     parts = rel.parts
     is_raw = parts and parts[0] == RAW_DIR
     is_wiki = parts and parts[0] == WIKI_DIR
     suffix = fp.suffix.lower()
+
+    # 维度 12 挂在二进制早退之前：豁免件也要计数（豁免不静默）
+    if is_raw and text_form_enabled and text_form_exempt is not None:
+        check_text_form(fp, rel, errors, text_form_exempt)
 
     # 二进制豁免文本校验
     if suffix in BINARY_EXTENSIONS:
@@ -862,7 +1222,8 @@ def main():
     out = sys.stdout
 
     parser = argparse.ArgumentParser(
-        description="agent-wiki 知识库治具 — 十一维结构校验（含落地台账/目录一致性、回测到期与归因登记）")
+        description="agent-wiki 知识库治具 — 十六维结构校验（含落地台账/目录一致性、"
+                    "回测到期、归因登记、文本形态、归因引用、卡片义务、TTL 与备份新鲜度）")
     parser.add_argument("root", help="知识库根目录")
     parser.add_argument(
         "--refresh-landing-ledger", action="store_true",
@@ -885,6 +1246,11 @@ def main():
     required_checks = len(DIMENSIONS)
 
     errors, warns = [], []
+    # 维度 12/13 的采用门控先于逐文件循环求值：一次扫描决定两维是否入账
+    text_form_enabled = text_form_adopted(root)
+    text_form_exempt = []
+    if not text_form_enabled:
+        skip_reasons.append("dimension_12_text_form:not_adopted")
     files = sorted(
         p for p in root.rglob("*")
         if p.is_file() and ".git" not in p.parts
@@ -892,7 +1258,12 @@ def main():
     )
     print(f"校验目标: {root}（{len(files)} 个文件，白名单{'已加载' if whitelist else '未配置/跳过'}）", file=out)
     for fp in files:
-        check_file(fp, root, whitelist, errors, warns)
+        check_file(fp, root, whitelist, errors, warns,
+                   text_form_enabled, text_form_exempt)
+    if text_form_exempt:
+        reasons = sorted({reason for reason, _ in text_form_exempt})
+        print(f"  [INFO] 文本形态 — 豁免 {len(text_form_exempt)} 件"
+              f"（{' / '.join(reasons)}）", file=out)
 
     # 维度 5 的必需入口与孤儿检测：全局视角无法逐文件裁，挂在文件循环之后；
     # 不受维度 8/9 采用门控——目录.md 属三层架构的 Wiki 层骨架，与注入面无关。
@@ -937,6 +1308,13 @@ def main():
     # 承担者；把它们挂在必经门禁上正是为了不让效果门与归因登记退回「人记得做」。
     check_green_backtest_staleness(root, errors, warns, skip_reasons)
     check_attribution_hit_field(root, errors, warns, skip_reasons)
+
+    # 维度 12-16：源保真与治理账。各自在函数内按实例声明门控，未声明的记 SKIP
+    # 而不是静默通过；13 依赖 12 的闭集，故沿用同一采用信号。
+    check_attribution_grounding(root, errors, warns, skip_reasons)
+    check_card_obligation(root, errors, warns, skip_reasons)
+    check_pending_ttl(root, errors, warns, skip_reasons)
+    check_backup_freshness(root, errors, warns, skip_reasons)
 
     skipped_dims = {r.split(":")[0] for r in skip_reasons}
     skipped_checks = len(skipped_dims)

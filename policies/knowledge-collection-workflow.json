@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "extends": "core",
   "description": "知识库采集工作流实例的完整治理策略；保留现有全部结构层检查。",
-  "cross_file_dimensions": [8, 9, 11, 12, 13, 14, 16, 17],
+  "cross_file_dimensions": [8, 9, 10, 11, 13, 14, 15, 16],
   "required_capabilities": {
     "persistent_memory": true,
     "independent_evaluator": true,

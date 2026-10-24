@@ -3,7 +3,7 @@
 """scripts/validate.py 的红绿双向回归治具。
 
 正向：examples/ 须判 PASS（退出码 0）。
-反向：十一维各造一次违规，须被判 ERROR（退出码 1）且报出对应维度——
+反向：十六维各造一次违规，须被判 ERROR（退出码 1）且报出对应维度——
       只会亮绿灯的治具等于没有治具。
 豁免项：命名与来源白名单属 WARN，违规时退出码仍须为 0，防门禁把常态豁免误判为失败。
 采用门控：维度 8（落地台账一致性）/维度 9（目录台账一致性）仅在「注入面.json 存在
@@ -81,6 +81,41 @@ GOOD_RAW_JSON = """{
   },
   "items": [{"id": 1}]
 }
+"""
+
+# 采用态夹具：raw 携带文本形态与可复算凭据，使维度 12/13 真正执行而非 SKIP
+GOOD_RAW_MD_TEXTFORM = GOOD_RAW_MD.replace(
+    "**原始来源:** github.com/example/fixture（夹具）",
+    "**原始来源:** github.com/example/fixture（夹具）\n"
+    "**文本形态:** 逐字全文\n"
+    "**取证凭据:** https://github.com/example/fixture 与上游 blob 对账")
+GOOD_RAW_JSON_TEXTFORM = GOOD_RAW_JSON.replace(
+    '"采集命令": "公开API（夹具）"',
+    '"采集命令": "公开API（夹具）",\n'
+    '    "文本形态": "逐字全文",\n'
+    '    "取证凭据": "https://github.com/example/fixture"')
+
+GOOD_SPEC = """# 夹具项目规范
+
+<!-- PENDING-TTL BEGIN -->
+| 事项 | 登记日 | 承担者 | 到期日 | 默认动作 | 状态 |
+|---|---|---|---|---|---|
+| 夹具未决项 | 2026-01-01 | Planner | 2099-01-01 | 维持现状并告警 | 待处置 |
+<!-- PENDING-TTL END -->
+"""
+
+TRANSCRIPT_RAW = """# 夹具转写件
+
+**URL:** https://github.com/example/fixture
+**采集时间:** 2026-06-30T10:00:00+08:00
+**采集命令:** 转写（夹具）
+**文本形态:** 转写摘要
+
+---
+
+## 正文
+
+转写内容。
 """
 
 GOOD_CARD = f"""# 夹具蒸馏卡
@@ -493,6 +528,17 @@ class AdoptedFixtureCase(FixtureCase):
 
     def setUp(self):
         super().setUp()
+        # 让维度 12-16 也进入执行面：采用态基线必须证明「全维真实跑过」，
+        # 否则 PASS 只说明没跑的维度没意见（SKIP 被读成通过）。
+        self.write("原始采集/文章/sample_good_20260630.md", GOOD_RAW_MD_TEXTFORM)
+        self.write("原始采集/文章/sample_data_20260630.json", GOOD_RAW_JSON_TEXTFORM)
+        self.write("项目规范.md", GOOD_SPEC)
+        bundles = self.root / "_bundles"
+        bundles.mkdir()
+        self.write("程序文件/配置/agent-wiki-instance.json", json.dumps({
+            "format": "agent-wiki-instance/v1",
+            "policy_settings": {"backup": {"bundle_directory": bundles.as_posix()}},
+        }, ensure_ascii=False))
         # 基线卡未携带落地指针；采用态下它会触发 MISSING_FIELD，故替换为采用态卡
         (self.root / "知识库" / "蒸馏卡_fixture_20260630.md").unlink()
         mem = self.root / "程序文件" / "记忆" / "user"
@@ -745,6 +791,125 @@ class TestLandingLedgerDrift(AdoptedFixtureCase):
         ledger = self.read_ledger()
         self.assertIn("verdict=WARM", ledger)
         self.assertNotIn("verdict=HOT", ledger, "提及不等于索引引用，HOT 判定失真")
+
+
+class TestRestoredDimensions(AdoptedFixtureCase):
+    """维度 12-16 的红绿双向：未采用记 SKIP，采用后违规则必须变红。"""
+
+    RAW_MD = "原始采集/文章/sample_good_20260630.md"
+    RAW_TXT = "原始采集/文章/sample_transcript_20260630.md"
+
+    def test_d12_missing_text_form_errors(self):
+        body = GOOD_RAW_MD_TEXTFORM.replace("**文本形态:** 逐字全文\n", "")
+        self.assertError(self.RAW_MD, body, "文本形态")
+
+    def test_d12_invalid_text_form_errors(self):
+        body = GOOD_RAW_MD_TEXTFORM.replace("**文本形态:** 逐字全文", "**文本形态:** 基本逐字")
+        self.assertError(self.RAW_MD, body, "取值非法")
+
+    def test_d12_verbatim_without_evidence_errors(self):
+        body = GOOD_RAW_MD_TEXTFORM.replace(
+            "**取证凭据:** https://github.com/example/fixture 与上游 blob 对账\n", "")
+        self.assertError(self.RAW_MD, body, "取证凭据")
+
+    def test_d12_evidence_without_anchor_errors(self):
+        body = GOOD_RAW_MD_TEXTFORM.replace(
+            "https://github.com/example/fixture 与上游 blob 对账", "经复核一致")
+        self.assertError(self.RAW_MD, body, "未指名可复算对象")
+
+    def test_d12_scoped_value_passes(self):
+        # 括号只缩窄范围、不改变档位：把精确限定语判红会逼人删掉「未采部分」的声明
+        body = GOOD_RAW_MD_TEXTFORM.replace(
+            "**文本形态:** 逐字全文",
+            "**文本形态:** 逐字节选（摘要一件；PDF 正文未采）")
+        self.write(self.RAW_MD, body)
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertNotIn("文本形态", out)
+
+    def test_d12_indocument_anchor_pointer_passes(self):
+        # 凭据写「值见第 2 条表」，锚点在同件表格里——仍可机器复算，不得判红
+        body = GOOD_RAW_MD_TEXTFORM.replace(
+            "**取证凭据:** https://github.com/example/fixture 与上游 blob 对账",
+            "**取证凭据:** 值见「采集者注」第 2 条表")
+        body = body.replace(
+            "正文内容。",
+            "正文内容。\n\n采集者注：sha256 "
+            "029574328c1a3d854d03651438e8add96ec40f74cce251c39b3fef84d7a07b3c。")
+        self.write(self.RAW_MD, body)
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertNotIn("取证凭据", out)
+
+    def test_d13_attribution_supported_only_by_transcript_errors(self):
+        self.write(self.RAW_TXT, TRANSCRIPT_RAW)
+        card = (self.root / self.card_rel).read_text(encoding="utf-8")
+        card = card.replace(
+            "- 原始采集/文章/sample_good_20260630.md",
+            "- [转写本](../原始采集/文章/sample_transcript_20260630.md)")
+        card = card.replace("规则正文。", "原文说道：这条规则来自转写本。")
+        self.assertError(self.card_rel, card, "归因引用")
+
+    def test_d13_mixed_forms_warn_only(self):
+        self.write(self.RAW_TXT, TRANSCRIPT_RAW)
+        card = (self.root / self.card_rel).read_text(encoding="utf-8")
+        card = card.replace(
+            "- 原始采集/文章/sample_good_20260630.md",
+            "- [逐字本](../原始采集/文章/sample_good_20260630.md)\n"
+            "- [转写本](../原始采集/文章/sample_transcript_20260630.md)")
+        card = card.replace("规则正文。", "原文说道：这条规则来自逐字本。")
+        self.write(self.card_rel, card)
+        rc, out = run_validator(self.root, "--refresh-landing-ledger")
+        self.assertEqual(0, rc, out)
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertIn("同卡混档", out)
+
+    def test_d14_marked_landing_without_card_errors(self):
+        index = GOOD_INDEX + "- [落地卡](蒸馏卡_fix_20260630.md)\n"
+        index += ("### [新条目](../原始采集/文章/sample_good_20260630.md) `✅`\n"
+                  "- **入库日期:** 2026-09-01\n"
+                  "- **落地状态:** `🟢 已落地`\n")
+        self.assertError("知识库/目录.md", index, "蒸馏卡")
+
+    def test_d15_expired_ttl_warns_not_blocks(self):
+        self.assertWarnOnly("项目规范.md", GOOD_SPEC.replace("2099-01-01", "2020-01-01"),
+                            "TTL 超期")
+
+    def test_d15_removed_block_with_mention_errors(self):
+        self.assertError("项目规范.md",
+                         "# 夹具项目规范\n\n本库用 PENDING-TTL 账登记未决事项。\n",
+                         "机器可读块缺失")
+
+    def test_d15_unescaped_pipe_row_errors(self):
+        spec = GOOD_SPEC.replace("| 夹具未决项 |", "| 夹具未决项`a|b` |")
+        self.assertError("项目规范.md", spec, "行结构非法")
+
+    def test_d16_unreachable_bundle_dir_warns(self):
+        self.write("程序文件/配置/agent-wiki-instance.json", json.dumps({
+            "format": "agent-wiki-instance/v1",
+            "policy_settings": {"backup": {
+                "bundle_directory": (self.root / "missing").as_posix()}},
+        }))
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertIn("[UNCOVERED]", out)
+
+    def test_d16_lag_over_threshold_warns(self):
+        git = ["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid"]
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+        subprocess.run(git + ["add", "-A"], cwd=self.root, check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "base"], cwd=self.root, check=True)
+        first = subprocess.run(["git", "rev-parse", "--short=7", "HEAD"], cwd=self.root,
+                               capture_output=True, text=True).stdout.strip()
+        for i in range(21):
+            subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", f"c{i}"],
+                           cwd=self.root, check=True)
+        (self.root / "_bundles" / f"knowledge_20260101-000000_{first}.bundle").write_bytes(b"x")
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertIn("备份新鲜度", out)
+        self.assertIn("落后 HEAD 21 提交", out)
 
 
 if __name__ == "__main__":
