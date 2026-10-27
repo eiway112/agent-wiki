@@ -57,7 +57,7 @@ WHITELIST = """{
 }
 """
 
-# 一份十一维全过的原始采集条目，作为各反向用例的单点扰动基线
+# 一份十六维全过的原始采集条目，作为各反向用例的单点扰动基线
 GOOD_RAW_MD = """# 夹具条目
 
 **URL:** <https://github.com/example/fixture>
