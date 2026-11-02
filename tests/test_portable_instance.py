@@ -542,6 +542,92 @@ class ReleaseManifestSelfConsistencyTest(unittest.TestCase):
                 self.assert_identity_fields(self.frontmatter_fields(stripped))
 
 
+class SkillDocNavigationTest(unittest.TestCase):
+    """目录条目与卡点表指针都是手抄副本：改了标题不改指针即静默死引用，读者只会退回「自己摸索」。
+    导航面缺失是本次发行面被评出的最低分项，故守卫随包文档一起跑，不靠记得同步。"""
+
+    TOC_SECTION = "目录"
+    POINTER_SECTIONS = ("快速上手", "常见卡点与出口")
+    ENTRY_SEP = " —— "
+    POINTER_RE = re.compile(r"「([^」]+)」")
+
+    def setUp(self):
+        self.text = (PACKAGE_ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+    def short(self, title: str) -> str:
+        return title.split("（")[0].strip()
+
+    def heading_names(self, text: str) -> set:
+        return {self.short(t) for t in re.findall(r"^#{2,3} (.+)$", text, re.M)}
+
+    def h2_names(self, text: str) -> set:
+        return {self.short(t) for t in re.findall(r"^## (.+)$", text, re.M)} - {self.TOC_SECTION}
+
+    def section_body(self, text: str, name: str):
+        match = re.search(
+            rf"^#{{2,3}} {re.escape(name)}(?:（[^）]*）)?\n(.*?)(?=^#{{2,3}} |\Z)", text, re.M | re.S)
+        return match.group(1) if match else None
+
+    def toc_violations(self, text: str) -> list:
+        body = self.section_body(text, self.TOC_SECTION)
+        if body is None:
+            return [f"缺 {self.TOC_SECTION} 节"]
+        entries, violations = [], []
+        for line in body.splitlines():
+            if not line.startswith("- "):
+                continue
+            label, _, hint = line[2:].partition(self.ENTRY_SEP)
+            label = label.strip()
+            entries.append(label)
+            if not hint.strip():
+                violations.append(f"目录条目 {label} 无一句话说明")
+        if len(entries) != len(set(entries)):
+            violations.append("目录条目重复")
+        for missing in sorted(self.h2_names(text) - set(entries)):
+            violations.append(f"目录缺条目 {missing}")
+        for extra in sorted(set(entries) - self.h2_names(text)):
+            violations.append(f"目录指向不存在的节 {extra}")
+        return violations
+
+    def pointer_violations(self, text: str) -> list:
+        names = self.heading_names(text)
+        violations = []
+        for section in self.POINTER_SECTIONS:
+            body = self.section_body(text, section)
+            if body is None:
+                violations.append(f"缺 {section} 节")
+                continue
+            for token in self.POINTER_RE.findall(body):
+                if token not in names:
+                    violations.append(f"{section} 指向不存在的节 「{token}」")
+        return violations
+
+    def test_toc_lists_every_h2_section_with_a_hint(self):
+        self.assertEqual([], self.toc_violations(self.text))
+
+    def test_section_pointers_resolve_to_real_headings(self):
+        self.assertEqual([], self.pointer_violations(self.text))
+
+    def test_guard_fails_on_renamed_heading(self):
+        # 负向注入：改标题不改目录与卡点表，两处守卫都须变红，否则「指路」这一层是空跑
+        renamed = re.sub(r"^## Lint（体检）$", "## 体检（原 Lint）", self.text, flags=re.M)
+        self.assertNotEqual(renamed, self.text, "注入未命中 Lint 标题，负向案为空跑")
+        self.assertTrue(self.toc_violations(renamed))
+        self.assertTrue(self.pointer_violations(renamed))
+
+    def test_guard_fails_on_unlisted_new_section(self):
+        # 负向注入：新增 H2 而不登记目录，目录守卫须报缺条目
+        grown = self.text.replace("## 约定速查", "## 新增节（未登记）\n\n## 约定速查", 1)
+        self.assertNotEqual(grown, self.text, "注入未落进正文，负向案为空跑")
+        self.assertIn("目录缺条目 新增节", self.toc_violations(grown))
+
+    def test_guard_fails_on_stale_pointer(self):
+        # 负向注入：指针指向一个不存在的节名，卡点表守卫须报出该条
+        stale = self.text.replace("见「落地台账」", "见「落地台账表」")
+        self.assertNotEqual(stale, self.text, "注入未命中卡点表指针，负向案为空跑")
+        self.assertTrue(any("落地台账表" in v for v in self.pointer_violations(stale)))
+
+
 class ReleaseIdentityEolInvarianceTest(unittest.TestCase):
     """release_id 须为提交内容的纯函数：同内容不同换行形态产出同一身份，否则跨机零内容漂移误报锁不一致。"""
 
