@@ -627,6 +627,34 @@ class SkillDocNavigationTest(unittest.TestCase):
         self.assertNotEqual(stale, self.text, "注入未命中卡点表指针，负向案为空跑")
         self.assertTrue(any("落地台账表" in v for v in self.pointer_violations(stale)))
 
+    README_VERSION_PATTERNS = (
+        re.compile(r"img\.shields\.io/badge/version-(\d+\.\d+\.\d+)-"),
+        re.compile(r"当前 `v(\d+\.\d+\.\d+)`"),
+    )
+
+    def readme_version_violations(self, readme: str, want: str) -> list:
+        found = [m.group(1) for pattern in self.README_VERSION_PATTERNS
+                 for m in [pattern.search(readme)] if m]
+        if not found:
+            return ["README 两处版本读数都解析不到，守卫空跑"]
+        if len(found) != len(self.README_VERSION_PATTERNS):
+            return [f"README 版本读数只解析到 {len(found)}/{len(self.README_VERSION_PATTERNS)} 处"]
+        return [] if all(v == want for v in found) else [f"README {found} != 发行清单 {want}"]
+
+    def test_readme_version_literals_match_release_manifest(self):
+        # 版本单源是 release-manifest.json；README 徽章与 tag 行是手抄副本，历史上就漏改过。
+        readme = (PACKAGE_ROOT / "README.md").read_text(encoding="utf-8")
+        want = json.loads((PACKAGE_ROOT / "release-manifest.json").read_text(encoding="utf-8"))["version"]
+        self.assertEqual([], self.readme_version_violations(readme, want))
+
+    def test_guard_fails_on_stale_readme_version(self):
+        # 负向注入：只改清单不改 README 手抄面，守卫须变红
+        readme = (PACKAGE_ROOT / "README.md").read_text(encoding="utf-8")
+        want = json.loads((PACKAGE_ROOT / "release-manifest.json").read_text(encoding="utf-8"))["version"]
+        drifted = readme.replace(f"version-{want}-", "version-9.9.9-", 1)
+        self.assertNotEqual(drifted, readme, "注入未命中徽章，负向案为空跑")
+        self.assertTrue(self.readme_version_violations(drifted, want))
+
 
 class ReleaseIdentityEolInvarianceTest(unittest.TestCase):
     """release_id 须为提交内容的纯函数：同内容不同换行形态产出同一身份，否则跨机零内容漂移误报锁不一致。"""
