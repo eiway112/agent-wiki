@@ -161,11 +161,7 @@ sequenceDiagram
 
 ## 结构治具
 
-`scripts/validate.py` 零依赖（仅标准库），覆盖 Lint 结构层十六维；随包最小样本 `examples/` 即其回归基线：
-
-```bash
-python scripts/validate.py examples
-```
+`scripts/validate.py` 零依赖（仅标准库），覆盖 Lint 结构层十六维；随包最小样本 `examples/` 即其回归基线，跑法见 `SKILL.md`「快速上手」第 1 步（本页不重抄命令）：
 
 | # | 维度 | 判定 |
 |---|---|---|
@@ -231,8 +227,8 @@ python scripts/validate_release_lock.py --instance <实例根>/程序文件/配�
 ```mermaid
 flowchart LR
     A["取得技能包"] --> B["放入技能目录"]
-    B --> C["初始化实例（可选）"]
-    C --> D["运行治具自检"]
+    B --> C["治具自检 examples"]
+    C --> D["初始化实例"]
     D --> E["第一次 Ingest"]
 ```
 
@@ -245,27 +241,9 @@ flowchart LR
 | 其他有技能目录概念的平台 | 按该平台约定放入对应技能目录 |
 | 无技能目录概念的平台 | 将 `SKILL.md` 作为系统提示／项目规范载入，按三层架构落地，目录名可本地化（见 `SKILL.md`「定位与适用」） |
 
-> 单文件安装只交付方法论本体。下述步骤 3–4 依赖 `scripts/` 与 `examples/`，需取完整发行包。
+> 单文件安装只交付方法论本体。下述步骤 3 依赖 `scripts/` 与 `examples/`，需取完整发行包。
 
-3. **初始化实例（可选）**：在完整发行包内执行
-
-```bash
-python scripts/init_instance.py --root <新实例根目录> --adapter qoder \
-  --user-memory-dir <用户记忆目录> --project-memory-dir <项目记忆目录> \
-  --source-domain example.com
-```
-
-生成零内容实例：`原始采集/`、`知识库/`、`程序文件/配置/`（注入面、策略副本、发行锁）与实例清单。`--policy` 可选 `core`（默认）或 `knowledge-collection-workflow`，`--backup-directory` 可选。
-
-4. **自检环境**：对随包 `examples/` 应输出 `PASS_WITH_SKIP` 且退出码 0（示例实跑覆盖 11/16 维，其余 5 维按门控跳过）：
-
-```bash
-python scripts/validate.py examples
-```
-
-> `PASS_WITH_SKIP` 表示有可选检查被跳过（如未采用注入面、缺实例清单），**不是全维通过**；报告会附覆盖率与逐项 skip 原因。
-
-5. **第一次 Ingest**：让智能体按 `SKILL.md`「Ingest」0–8 步清单执行，或参照 `examples/` 中的样本文件。
+3. **跑通四步**：自检环境 → 建零内容实例 → 填注入面占位符 → 第一次 Ingest。命令与参数以 `SKILL.md`「快速上手」为唯一来源，本页不复制那四条——两处各写一份，任改一处即漂移。卡住先查 `SKILL.md`「常见卡点与出口」，那里按症状列了合法出口。
 
 ## 目录结构
 
