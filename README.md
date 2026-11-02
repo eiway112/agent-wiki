@@ -306,7 +306,7 @@ agent-wiki/
 
 - 版本单源是 `release-manifest.json` 的 `version`；`SKILL.md` frontmatter 的 `version` 与其等值由 `tests/test_portable_instance.py` 机检，不存在第二处手改。
 - 发行基线以 git tag 标注（当前 `v1.8.0`）；引用请锁定 tag，避免跟随主干拿到中间状态。
-- **Releases 页只作版本说明，不附打包产物**（每条 Release 的 `assets` 为零）：正文取自该 tag 的提交说明，不另写一份事实；每次发版随 tag 同步一条说明式 Release——缺一条即让 `releases/latest` 停在旧版本，公开面读起来就是失实。取包一律走克隆或 `scripts/build_release.py`。改动 `include` 清单即改变发行身份，须重建发行包并重新钉实例锁。
+- **Releases 页只作版本说明，不手工上传产物**：GitHub 侧每条 `assets` 为零；gitee 侧由平台自动挂该 tag 的源码包（zip／tar.gz 各一），属平台行为、非本仓维护物，也不作取包入口。正文取自该 tag 的提交说明，不另写一份事实；每次发版在**两个远端各同步一条**说明式 Release——GitHub 缺条即让 `releases/latest` 停在旧版本，gitee 缺条即版本史断档，公开面读起来都是失实。取包一律走克隆或 `scripts/build_release.py`。改动 `include` 清单即改变发行身份，须重建发行包并重新钉实例锁。
 - 反馈与纠错：欢迎开 Issue（使用问题、判据歧义、跨平台失效线索均可）。
 - **Harness 递减**：治具与流程是补偿模型弱点的辅助机制，随模型进步单调递减。每次 Lint 审视哪些检查已不再触发真实信号；删除守卫须先有受控负向用例证明它不再拦住任何真缺陷，并附实际维护成本，两者缺一即保留。
 
