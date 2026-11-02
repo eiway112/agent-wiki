@@ -3,7 +3,7 @@
   <p>平台无关的知识运营方法论 —— 采集入库 · 任务必经检索 · 知识库体检</p>
   <p>
     <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
-    <img src="https://img.shields.io/badge/version-1.7.0-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-1.8.0-blue" alt="version">
     <img src="https://img.shields.io/badge/evaluator-16%20dimensions-blueviolet" alt="evaluator">
     <img src="https://img.shields.io/badge/python-%E2%89%A53.9-orange" alt="python">
   </p>
@@ -305,7 +305,7 @@ agent-wiki/
 ## 版本与迭代策略
 
 - 版本单源是 `release-manifest.json` 的 `version`；`SKILL.md` frontmatter 的 `version` 与其等值由 `tests/test_portable_instance.py` 机检，不存在第二处手改。
-- 发行基线以 git tag 标注（当前 `v1.7.0`）；引用请锁定 tag，避免跟随主干拿到中间状态。本仓不维护 Release 打包产物，取包走克隆或 `scripts/build_release.py`。改动 `include` 清单即改变发行身份，须重建发行包并重新钉实例锁。
+- 发行基线以 git tag 标注（当前 `v1.8.0`）；引用请锁定 tag，避免跟随主干拿到中间状态。本仓不维护 Release 打包产物，取包走克隆或 `scripts/build_release.py`。改动 `include` 清单即改变发行身份，须重建发行包并重新钉实例锁。
 - 反馈与纠错：欢迎开 Issue（使用问题、判据歧义、跨平台失效线索均可）。
 - **Harness 递减**：治具与流程是补偿模型弱点的辅助机制，随模型进步单调递减。每次 Lint 审视哪些检查已不再触发真实信号；删除守卫须先有受控负向用例证明它不再拦住任何真缺陷，并附实际维护成本，两者缺一即保留。
 

@@ -51,6 +51,27 @@ def qualified_backtest(n: int = 0) -> str:
             f" | 历史任务标识：夹具基线 {days_ago(n)} | 结论：保留\n")
 
 
+def reverse_sections(veto_body: str = "更严版本＝反向字段一体适用于存量卡——否决：回切成本"
+                                      "从「新卡多写两节」变「全库重新解释规则」；"
+                                      "逃生通道＝生效日门控。\n\n"
+                                      "更宽版本＝只要求失效扳机——否决：被压掉的更强分支"
+                                      "正是本节要留的对象，回切成本从「凑数风险」变「漏分支」。",
+                     trigger_body: str = "连续两轮 Lint 抽样中本卡未改变任何新卡的写法 → 降 🔵。"
+                                         "可观测事件＋阈值，非「以后看情况」。") -> str:
+    """维度 7 反向两节（否决分支／失效扳机）的合格正文，供红绿两侧取用。"""
+    return f"\n## 否决分支\n\n{veto_body}\n\n## 失效扳机\n\n{trigger_body}\n"
+
+
+def card_dated(day: str) -> str:
+    """GOOD_CARD 加一条「蒸馏日期」元数据行，用于隔离维度 7 的生效日门控。"""
+    return GOOD_CARD.replace("- 落地状态: 🟢 已落地",
+                             f"- 落地状态: 🟢 已落地\n- 蒸馏日期: {day}")
+
+
+# 早于反向字段生效日的日期：维度 10 的用例须让维度 7 保持常量，否则一次扰动跨两维
+LEGACY_DISTILL_DAY = "2026-01-01"
+
+
 WHITELIST = """{
   "_说明": "测试夹具白名单",
   "sources": [{"name": "GitHub（示例）", "type": "browser", "domains": ["github.com"]}]
@@ -298,6 +319,44 @@ class TestNegativeDimensions(FixtureCase):
         body = GOOD_CARD.replace("前提：仅适用于零依赖治具可裁定的结构特征。", "")
         self.assertError("知识库/蒸馏卡_fixture_20260630.md", body, "为空")
 
+    def test_d7_new_card_missing_reverse_sections_errors(self):
+        # 反向字段：只写正向前提的卡在「何时该推翻本卡」上是空白，实测 48 张卡里
+        # 失效扳机 2 张、否决分支 2 张——处置动作因此无处可指，改档被迫判 0。
+        day = validate.CARD_REVERSE_FIELDS_SINCE.isoformat()
+        self.assertError("知识库/蒸馏卡_new_20260630.md", card_dated(day),
+                         "缺少必需章节「否决分支」")
+
+    def test_d7_new_card_empty_reverse_section_errors(self):
+        day = validate.CARD_REVERSE_FIELDS_SINCE.isoformat()
+        body = card_dated(day) + reverse_sections(veto_body="")
+        self.assertError("知识库/蒸馏卡_new_20260630.md", body, "章节「否决分支」为空")
+
+    def test_d7_declaration_of_no_stricter_branch_counts_as_filled(self):
+        # 「空着不算填过，声明算填过」：逼出凑数填写的判据不如接受诚实声明
+        day = validate.CARD_REVERSE_FIELDS_SINCE.isoformat()
+        body = card_dated(day) + reverse_sections(
+            veto_body="无更严分支，因本卡断言 1 已是最严形态（缺一即判结构不完整）。")
+        self.write("知识库/蒸馏卡_new_20260630.md", body)
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, f"诚实声明被当成未填：\n{out}")
+        self.assertNotIn("否决分支", out)
+
+    def test_d7_legacy_card_without_reverse_sections_still_passes(self):
+        # 生效日门控：追改存量卡即把一次发布变成一次全库返工（实测 44/48 张转红），
+        # 且补反向字段等于重新解释当初的规则。
+        body = card_dated("2026-01-01")
+        self.write("知识库/蒸馏卡_legacy_20260630.md", body)
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, f"生效日之前的存量卡被追改：\n{out}")
+        self.assertNotIn("反向字段", out)
+
+    def test_d7_card_without_any_date_is_treated_as_new(self):
+        # 免检通道不得由被检方书写：删掉「蒸馏日期」即免检的话，本维形同可关。
+        self.write("知识库/蒸馏卡_无日期.md", GOOD_CARD + "\n")
+        rc, out = run_validator(self.root)
+        self.assertEqual(1, rc, f"无任何日期的卡被按存量卡免检：\n{out}")
+        self.assertIn("缺少必需章节「否决分支」", out)
+
     def test_d1_prose_mention_of_fields_is_not_registration(self):
         # 旧版全文子串检出：正文提一嘴三个字段名即可满足「元数据完整」——须拦下
         body = GOOD_RAW_MD.replace("**采集命令:** 手动粘贴（夹具）\n", "")
@@ -349,7 +408,8 @@ class TestGreenBacktestStaleness(FixtureCase):
 
     def card_with(self, record: str, status: str = "🟢") -> str:
         body = GOOD_CARD.replace(qualified_backtest(), record)
-        return body.replace("- 落地状态: 🟢 已落地", f"- 落地状态: {status} 夹具状态")
+        return body.replace("- 落地状态: 🟢 已落地",
+                            f"- 落地状态: {status} 夹具状态\n- 蒸馏日期: {LEGACY_DISTILL_DAY}")
 
     def test_overdue_green_card_errors(self):
         self.assertError(self.CARD, self.card_with(qualified_backtest(WINDOW_DAYS + 1)),
@@ -402,6 +462,38 @@ class TestGreenBacktestStaleness(FixtureCase):
         rc, out = run_validator(self.root)
         self.assertEqual(0, rc, f"全角分隔的合格记录被误判无效：\n{out}")
         self.assertNotIn("回测到期", out)
+
+    def test_d10_bold_form_record_is_flagged_not_dropped(self):
+        # 「写了等于没写」的现身：日期打头但整行加粗（实测三张卡的具体形态）
+        # 过去只被静默丢弃，报出的「距最近合格回测 N 天」把格式缺口读成没人回测过。
+        record = (f"**{days_ago(0)} | 回测靶：夹具任务 | 执行者：独立评审智能体**\n")
+        self.write(self.CARD, self.card_with(record))
+        rc, out = run_validator(self.root)
+        self.assertEqual(1, rc, f"该行不计为锚点，🟢 卡仍须判到期：\n{out}")
+        self.assertIn("回测到期", out)
+        self.assertIn("回测登记未采纳", out)
+        self.assertIn("缺 结论", out)  # 该行有回测靶与执行者，缺的是结论
+
+    def test_d10_indented_later_record_counts_as_anchor(self):
+        # 行首空白容忍须是显式判据，不能靠 card_section_body 的 .strip() 偶然救回
+        # 首条：旧实现下「首条缩进记录」通过、「次条缩进记录」被吞，同一写法随位置变判定。
+        record = qualified_backtest(WINDOW_DAYS + 1) + "  " + qualified_backtest(0)
+        self.write(self.CARD, self.card_with(record))
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, f"缩进的第二条合格记录被静默丢弃（到期数取的是陈旧首条）：\n{out}")
+        self.assertNotIn("回测到期", out)
+        self.assertNotIn("回测登记未采纳", out)
+
+    def test_d10_prose_dates_do_not_trigger_the_diagnostic(self):
+        # 噪声闸：散文里引用的日期不是「记录形态的误写」，报警即把实测那 14 张卡的
+        # 注记全读成缺陷，判据失去可用性。散文写在首条记录之前，才真正过意图门槛。
+        record = ("- 复核注记：与本库 2026-09-02 对「自评虚高」的裁定一致。\n"
+                  + "### 2026-10-01 · 落地可行性评估（非典型回测）\n"
+                  + qualified_backtest())
+        self.write(self.CARD, self.card_with(record))
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertNotIn("回测登记未采纳", out)
 
 
 class TestAttributionHitField(FixtureCase):
@@ -728,6 +820,30 @@ class TestCrossReferenceBoundary(FixtureCase):
         body = "# 回填页\n\n一次 Query 的好答案。\n"
         self.assertWarnOnly("知识库/回填页.md", body, "孤儿页面")
 
+    def test_unreferenced_raw_surfaces_as_orphan_warn(self):
+        # raw 侧失明：改前受控用例放 30 件未被任何面引用的采集件可全程零输出，
+        # 「治具 PASS」被读成「库内无遗漏」。
+        body = GOOD_RAW_MD.replace("# 夹具条目", "# 游离采集件")
+        self.assertWarnOnly("原始采集/文章/loose_orphan_20260630.md", body, "孤儿采集件")
+
+    def test_raw_orphan_detection_reaches_nested_directories(self):
+        # 原始采集按 文章/视频/讨论 分层，一层 glob 会重演同一处失明
+        body = GOOD_RAW_MD.replace("# 夹具条目", "# 子目录游离件")
+        self.assertWarnOnly("原始采集/视频/nested_loose_20260630.md", body, "孤儿采集件")
+
+    def test_raw_covered_by_card_source_pointer_is_not_orphan(self):
+        # 噪声闸：raw 的正常归宿是被卡片「来源指针」溯源；只认目录.md 会把
+        # 「已蒸馏未进目录」的正常态读成孤儿，逼人关掉这一维。
+        self.write("原始采集/讨论/from_discussion_20260630.md",
+                   GOOD_RAW_MD.replace("# 夹具条目", "# 讨论采集件"))
+        card = GOOD_CARD.replace(
+            "- 原始采集/文章/sample_good_20260630.md",
+            "- [讨论件](../原始采集/讨论/from_discussion_20260630.md)")
+        self.write("知识库/蒸馏卡_fixture_20260630.md", card)
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertNotIn("孤儿采集件", out)
+
 
 class TestLandingLedgerDrift(AdoptedFixtureCase):
     """维度 8 反向：台账是 Query 第 1 步的规则集来源——状态漂移、未收录、幽灵行
@@ -864,6 +980,43 @@ class TestRestoredDimensions(AdoptedFixtureCase):
         rc, out = run_validator(self.root)
         self.assertEqual(0, rc, out)
         self.assertIn("同卡混档", out)
+
+    def test_d13_verbatim_link_outside_source_pointer_cannot_rescue(self):
+        # 证据面只有「来源指针」一处（SKILL.md 维度 13 成文口径）。改前现场：来源指针
+        # 仅链转写本、适用边界里顺手引了逐字件 → 整卡枚举把逐字档算进证据，归因句
+        # 只吃「同卡混档」WARN 而漏放行；收窄后须按「全为非逐字」判 ERROR。
+        self.write(self.RAW_TXT, TRANSCRIPT_RAW)
+        card = (self.root / self.card_rel).read_text(encoding="utf-8")
+        card = card.replace(
+            "- 原始采集/文章/sample_good_20260630.md",
+            "- [转写本](../原始采集/文章/sample_transcript_20260630.md)")
+        card = card.replace(
+            "前提：仅适用于零依赖治具可裁定的结构特征。",
+            "前提：仅适用于零依赖治具可裁定的结构特征。对照件见 "
+            "[逐字本](../原始采集/文章/sample_good_20260630.md)。")
+        card = card.replace("规则正文。", "原文说道：这条规则来自逐字本。")
+        self.assertError(self.card_rel, card, "全为非逐字")
+
+    def test_d13_other_section_reference_does_not_create_mixed_forms(self):
+        # 反向（假红方向）：来源指针只链逐字件时归因成立，他节把转写本当反面案例
+        # 引用不得污染档位判定。改前现场：整卡枚举使同卡出现「逐字+非逐字并存」，
+        # 本应干净的卡吃进「同卡混档」告警。
+        self.write(self.RAW_TXT, TRANSCRIPT_RAW)
+        card = (self.root / self.card_rel).read_text(encoding="utf-8")
+        card = card.replace(
+            "- 原始采集/文章/sample_good_20260630.md",
+            "- [逐字本](../原始采集/文章/sample_good_20260630.md)")
+        card = card.replace(
+            "前提：仅适用于零依赖治具可裁定的结构特征。",
+            "前提：仅适用于零依赖治具可裁定的结构特征。反面案例见 "
+            "[转写本](../原始采集/文章/sample_transcript_20260630.md)。")
+        card = card.replace("规则正文。", "原文说道：这条规则来自逐字本。")
+        self.write(self.card_rel, card)
+        rc, out = run_validator(self.root, "--refresh-landing-ledger")
+        self.assertEqual(0, rc, out)
+        rc, out = run_validator(self.root)
+        self.assertEqual(0, rc, out)
+        self.assertNotIn("同卡混档", out)
 
     def test_d14_marked_landing_without_card_errors(self):
         index = GOOD_INDEX + "- [落地卡](蒸馏卡_fix_20260630.md)\n"

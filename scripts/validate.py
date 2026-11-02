@@ -13,7 +13,8 @@
     4. 命名规范     — 原始采集遵循 {source}_{topic}_{date}.{ext}   (WARN)
     5. 交叉引用     — 链接可达（去 #锚点后比对）、目录.md 必需入口与孤儿检测 (ERROR/WARN)
     6. 来源白名单   — 原始采集 URL 域名属于白名单                  (WARN)
-    7. 蒸馏卡规范性 — 蒸馏卡必含非空「适用边界」「来源指针」章节    (ERROR)
+    7. 蒸馏卡规范性 — 蒸馏卡必含非空「适用边界」「来源指针」章节；CARD_REVERSE_FIELDS_SINCE
+      起的新卡另须含「否决分支」「失效扳机」反向两节（存量卡不追改）    (ERROR)
     8. 落地台账一致性 — 卡内状态/判定与台账机器块收录与取值逐一对账 (ERROR)
     9. 目录台账一致性 — 目录.md 引用的蒸馏卡与落地台账对账          (ERROR/WARN)
    10. 🟢 回测到期   — 距最近合格回测超窗口判 ERROR；围栏示例不算记录 (ERROR/WARN)
@@ -77,7 +78,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -98,7 +99,17 @@ MOJIBAKE_SIGNS = set("瀹浠涓鏃鑷鐢鍑鍒銆锛鈥鑻鑺搷浣绋搴")
 NAME_RE = re.compile(r"^[a-z]+_.+_\d{8}\.\w+$")
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)#\s][^)]*)\)")
 CARD_PREFIX = "蒸馏卡_"
-CARD_REQUIRED_SECTIONS = ("适用边界", "来源指针")
+CARD_SOURCE_SECTION = "来源指针"
+CARD_REQUIRED_SECTIONS = ("适用边界", CARD_SOURCE_SECTION)
+# 反向字段：只写正向前提的卡在「被推翻条件」上是空白——实测实例库 48 张卡里
+# 含失效扳机 2 张、含否决分支 2 张，其余卡判「是否该推翻本卡」只能靠散文回忆。
+# 独立成节（不嵌进「适用边界」）是为了让本维现有的章节非空检查直接覆盖，
+# 不新增解析形态；语义真伪仍归判断层回测，本维只裁有无与非空。
+CARD_REVERSE_SECTIONS = ("否决分支", "失效扳机")
+# 生效日：早于该日的存量卡不追改（补反向字段＝重新解释规则，会催生凑数填写）。
+# 取 1.8.0 落地次日而非当日：当日已入库的卡写在模板变更之前，按当日生效即追改。
+CARD_REVERSE_FIELDS_SINCE = date(2026, 11, 3)
+CARD_DISTILL_DATE_RE = re.compile(r"^-\s*蒸馏日期:\s*(\d{4}-\d{2}-\d{2})", re.M)
 POINTER_LINE_RE = re.compile(r"^-\s*落地指针:\s*(.+?)\s*$", re.M)
 CARD_STATUS_RE = re.compile(r"^-\s*落地状态:\s*(🟢|🟡|🔵)", re.M)
 VERDICT_RANK = {"INVALID": 0, "ORPHANED": 1, "NONE": 2, "DOC": 3, "WARM": 4, "HOT": 5}
@@ -119,6 +130,20 @@ BACKTEST_FIELD_RE = re.compile(
     r"^\s*(?:[-*]\s*)?(?:\*\*)?\s*(执行者|历史任务标识|回测靶|结论|裁定)"
     r"\s*(?:\*\*)?\s*[：:]\s*(?:\*\*)?\s*(.*?)\s*$")
 BACKTEST_VERDICT_PREFIX = ("保留", "降级", "补边界")
+# 记录行的声明形态（rule-template.md「回测记录」节）：行首 `- ` 后紧跟 ISO 日期。
+# 行首空白显式容忍——旧实现靠 card_section_body 的 .strip() 偶然救回「首条缩进记录」，
+# 第二条起不救，同一写法随位置改变判定即不可复算。
+BACKTEST_HEADER_RE = re.compile(r"[ \t]*-[ \t]+(\d{4}-\d{2}-\d{2})\b")
+BACKTEST_SPLIT_RE = re.compile(r"(?m)^(?=[ \t]*-[ \t]+\d{4}-\d{2}-\d{2}\b)")
+# 「意图登记」判据：剥掉列表符/加粗符后日期打头的行才算作者想登记一条记录。
+# 只用「含日期」当门槛会把散文里的日期引用（`### 2026-09-03 · 评估`、
+# 「与本工作区 2026-09-02 的裁定一致」）报成缺陷——那些不是记录形态的误写。
+BACKTEST_INTENT_RE = re.compile(
+    r"^[ \t]*(?:[-*]+[ \t]*)?(?:\*\*)?[ \t]*(\d{4}-\d{2}-\d{2})")
+# 作者已就地声明「这行不是回测」时不报警：本诊断封的是「想登记却没登记上」，
+# 不是「声明了不登记」。
+BACKTEST_NONRECORD_MARKS = re.compile(
+    r"落地自查|不计锚点|不作锚点|非回测|非典型回测|待补")
 
 # ---------- 维度 11：归因命中字段 ----------
 LOG_NAME = "操作日志.md"
@@ -193,6 +218,27 @@ def card_section_body(content: str, name: str):
     rest = content[m.end():]
     nxt = re.search(r"^##\s", rest, re.M)
     return (rest[: nxt.start()] if nxt else rest).strip()
+
+
+def card_effective_date(fp: Path, content: str) -> date:
+    """卡的生效判定日期：元数据「蒸馏日期」优先，回落卡名 8 位日期戳。
+
+    两个来源都取不到时返回 date.max（按新卡处理，fail-closed）：反向字段的义务面
+    若因日期不可解而免检，删掉「蒸馏日期」行即绕开本维——免检通道不能由被检方书写。
+    """
+    m = CARD_DISTILL_DATE_RE.search(content)
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    stamp = re.search(r"(\d{8})(?=\.md$)", fp.name)
+    if stamp:
+        try:
+            return datetime.strptime(stamp.group(1), "%Y%m%d").date()
+        except ValueError:
+            pass
+    return date.max
 
 
 def strip_code_fences(text: str) -> str:
@@ -445,7 +491,7 @@ def refresh_landing_ledger(root: Path) -> str:
         if cap and n > cap:
             over_cap.append(f"{key}={n}>{cap}")
     orphans = [r["card"] for r in rows if r["verdict"] == "ORPHANED"]
-    overdue, unanchorable = green_backtest_facts(root)
+    overdue, unanchorable, _ = green_backtest_facts(root)
 
     lines = [
         "# 落地台账",
@@ -623,11 +669,17 @@ WIKI_CORE_PAGES = {"目录.md", LEDGER_NAME, LOG_NAME, "采集经验.md"}
 
 
 def check_wiki_index_entries(root: Path, errors, warns):
-    """维度 5 补充：必需入口存在性 + 孤儿页面检测（不受采用门控）。
+    """维度 5 补充：必需入口存在性 + 孤儿检测（Wiki 页与原始采集件，不受采用门控）。
 
     注释曾称「目录.md 缺失由交叉引用检查报告」而对面没有实现——本函数即该承诺的
     承担者：目录.md 是 Query 降级检索与入库导航的入口，缺失判 ERROR；目录.md 未
     引用任何入链的内容页判 WARN（孤儿 ≠ 断链，不阻塞提交）。
+
+    原始采集侧原为本维的扫描范围缺口（一处 glob 少一层目录，非缺一类维度）：
+    受控用例实测：30 件未被任何面引用的 raw 全程零输出，「治具 PASS」被读成「库内无遗漏」。
+    引用集取 `目录.md ∪ 各蒸馏卡「来源指针」`：raw 的正常归宿是「被卡片溯源后进入目录」，
+    只认目录.md 会把刚入库待蒸馏与已由卡片覆盖两种正常态一并读成告警，噪声面会逼人
+    关掉这一维——封堵失明不能以制造噪声为代价。
     """
     wiki = root / WIKI_DIR
     if not wiki.is_dir():
@@ -647,11 +699,28 @@ def check_wiki_index_entries(root: Path, errors, warns):
             f"{WIKI_DIR}/{page.name}: 交叉引用 — 孤儿页面：目录.md 未引用该页；"
             "应在目录.md 建立引用，或按冷层约定归档")
 
+    raw_dir = root / RAW_DIR
+    if not raw_dir.is_dir():
+        return
+    covered = set(referenced)
+    for card in iter_cards(root):
+        body = card.read_text(encoding="utf-8-sig", errors="replace")
+        for link in LINK_RE.findall(card_section_body(body, CARD_SOURCE_SECTION) or ""):
+            covered.add(Path(link.split("#", 1)[0]).name)
+    for fp in sorted(raw_dir.rglob("*.md")):
+        if fp.name in covered:
+            continue
+        warns.append(
+            f"{RAW_DIR}/{fp.relative_to(raw_dir)}: 交叉引用 — 孤儿采集件："
+            "目录.md 未建条目且无任何蒸馏卡的「来源指针」引用；处置三选一："
+            "①在目录.md 建立条目，②蒸馏时把该件写入某卡的「来源指针」，"
+            "③按冷层约定归档并在目录.md 声明归档位置")
+
 
 # ---------- 维度 10/11：判断层回测与归因的机检臂 ----------
 
-def record_has_three_elements(text: str) -> bool:
-    """按字段边界求值三要素：字段须以 |/｜或换行为界，值非空。
+def backtest_missing_elements(text: str):
+    """按字段边界求值三要素并返回缺失项（空列表＝三要素齐全）。
 
     旧版用 `执行者[：:]([^\\n|｜]+)` 全文搜刮，「执行者:（空） 历史任务标识: X」
     会吞并后一字段充当执行者；现在逐 chunk 锚定匹配，空字段就是缺要素。
@@ -672,7 +741,65 @@ def record_has_three_elements(text: str) -> bool:
                 found.add("executor")
             else:  # 历史任务标识 / 回测靶
                 found.add("task")
-    return {"executor", "task", "verdict"} <= found
+    return [label for key, label in (("executor", "执行者"),
+                                     ("task", "历史任务标识/回测靶"),
+                                     ("verdict", "结论"))
+            if key not in found]
+
+
+def record_has_three_elements(text: str) -> bool:
+    """三要素齐全＝缺失列表为空；判据单源在 backtest_missing_elements。"""
+    return not backtest_missing_elements(text)
+
+
+def backtest_records(body: str):
+    """解析「回测记录」节，返回 (合格锚点日期列表, 未采纳的意图登记行及缺失要素)。
+
+    两条丢弃路径都须现身为可读诊断，不得静默：
+    ①形态不符——剥掉列表符/加粗符后日期打头，但不在 `- {YYYY-MM-DD}` 记录位上
+      （实测形态：整行加粗 `**2026-08-30 | 回测靶：… | 执行者：…**`、
+      `- **2026-08-17 首轮回测**（落地当日执行…）`），整行不参与解析；
+    ②三要素缺项——参与解析但判为未回测。
+    静默丢弃的实测后果：报出的「距最近合格回测 N 天」把格式/字段缺口读成「没人回测过」，
+    作者对着卡里那行回测看不出自己差在哪；卡名日期新鲜时更是直接放行（写了等于没写
+    且不报错）。缺失要素与采纳判据共用同一求值，不另写一份字段规则。
+    """
+    seg = strip_code_fences(card_section_body(body, BACKTEST_SECTION) or "")
+    today = datetime.now().date()
+    parsed, dropped = [], []
+
+    def note(line, missing):
+        stripped = line.strip()
+        if not stripped or BACKTEST_NONRECORD_MARKS.search(stripped):
+            return  # 作者已就地声明这行不是回测记录
+        dropped.append((stripped[:80], missing))
+
+    for block in BACKTEST_SPLIT_RE.split(seg):
+        lines = block.splitlines()
+        header = lines[0] if lines else ""
+        stamp = BACKTEST_HEADER_RE.match(header)
+        if not stamp:
+            # 非记录块（首块是表头前的散文，或整块形态不符）：只把「日期打头」的行
+            # 当意图登记——散文里引用的日期（`### 2026-09-03 · 评估`、
+            # 「与 2026-09-02 的裁定一致」）不是记录形态的误写，不报。
+            for line in lines:
+                if BACKTEST_INTENT_RE.match(line) and not BACKTEST_T0_EXCLUDE_RE.search(line):
+                    note(line, backtest_missing_elements(line.replace("`", ""))
+                         or ["记录形态（须 `- 日期 | …` 置于行首）"])
+            continue
+        if BACKTEST_T0_EXCLUDE_RE.search(header):
+            continue
+        missing = backtest_missing_elements(block.replace("`", ""))
+        if missing:
+            note(header, missing)
+            continue
+        try:
+            day = datetime.strptime(stamp.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if day <= today:  # 未来日期不清零：写在纸上的将来不算已发生
+            parsed.append(day)
+    return parsed, dropped
 
 
 def backtest_anchor_days(body: str, card_name: str):
@@ -684,22 +811,7 @@ def backtest_anchor_days(body: str, card_name: str):
     （落地日），使「一条回测都没有」等于满窗到期而不是永久免检。
     独立性与结论真伪不在本函数判据内（归判断层人工抽样），猜即越界。
     """
-    seg = strip_code_fences(card_section_body(body, BACKTEST_SECTION) or "")
-    today = datetime.now().date()
-    parsed = []
-    for record in re.split(r"(?m)^(?=-[ \t]+\d{4}-\d{2}-\d{2}\b)", seg):
-        header = record.splitlines()[0] if record else ""
-        stamp = re.match(r"-[ \t]+(\d{4}-\d{2}-\d{2})\b", header)
-        if not stamp or BACKTEST_T0_EXCLUDE_RE.search(header):
-            continue
-        if not record_has_three_elements(record.replace("`", "")):
-            continue
-        try:
-            day = datetime.strptime(stamp.group(1), "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        if day <= today:  # 未来日期不清零：写在纸上的将来不算已发生
-            parsed.append(day)
+    parsed, _ = backtest_records(body)
     if not parsed:
         stamp = re.search(r"(\d{8})(?=\.md$)", card_name)
         if stamp:
@@ -707,18 +819,18 @@ def backtest_anchor_days(body: str, card_name: str):
                 day = datetime.strptime(stamp.group(1), "%Y%m%d").date()
             except ValueError:
                 return None
-            if day <= today:
+            if day <= datetime.now().date():
                 parsed.append(day)
-    return (today - max(parsed)).days if parsed else None
+    return (datetime.now().date() - max(parsed)).days if parsed else None
 
 
 def green_backtest_facts(root: Path):
-    """返回 (到期明细, 无锚点卡名)：🟢 卡的到期由机器算日期锚点，不由卡内散文自报。
+    """返回 (到期明细, 无锚点卡名, 被丢弃的意图登记行)：🟢 卡的到期由机器算日期锚点，不由卡内散文自报。
 
     散文不会自己过期——「（待首轮回测：落地未满两周）」式相对时间实测把 🟢 卡
     豁免成永久免检，故一律交 backtest_anchor_days 求值。
     """
-    overdue, unanchorable = [], []
+    overdue, unanchorable, discarded = [], [], []
     for card in iter_cards(root):
         body = card.read_text(encoding="utf-8-sig", errors="replace")
         status = CARD_STATUS_RE.search(body)
@@ -729,7 +841,10 @@ def green_backtest_facts(root: Path):
             unanchorable.append(card.name)
         elif days > GREEN_BACKTEST_WINDOW_DAYS:
             overdue.append((card.name, days))
-    return overdue, unanchorable
+        _, dropped = backtest_records(body)
+        for line, missing in dropped:
+            discarded.append((card.name, line, missing))
+    return overdue, unanchorable, discarded
 
 
 def check_green_backtest_staleness(root: Path, errors, warns, skip_reasons):
@@ -740,7 +855,7 @@ def check_green_backtest_staleness(root: Path, errors, warns, skip_reasons):
     合法出口有二且等价：①补一条合格回测；②降级 🟡/🔵。**允许降级正是防凑数的设计**
     ——补不出真回测时诚实降级必过，写假回测则无收益。
     """
-    overdue, unanchorable = green_backtest_facts(root)
+    overdue, unanchorable, discarded = green_backtest_facts(root)
     for name, days in overdue:
         errors.append(
             f"{WIKI_DIR}/{name}: 回测到期 — 🟢 距最近合格回测 {days} 天 > "
@@ -752,6 +867,14 @@ def check_green_backtest_staleness(root: Path, errors, warns, skip_reasons):
             f"{WIKI_DIR}/{name}: 回测到期 — 🟢 无可解日期锚点，本维不可判其到期"
             "（不可核不等于通过，勿静默留在不可判区）；补形如"
             "「- 2026-06-30 | 执行者：… | 历史任务标识：… | 结论：保留」的记录，或改判状态")
+    for name, line, missing in discarded:
+        # 「写了等于没写」的现身：不报警时，上面那条到期 ERROR 会把格式/字段缺口
+        # 读成「没人回测过」，作者对着卡里那行看不出差在哪。
+        warns.append(
+            f"{WIKI_DIR}/{name}: 回测登记未采纳 — 该行含回测日期但不计为锚点，"
+            f"缺 {'／'.join(missing)}；行文：「{line}」；"
+            "合格记录形态见 rule-template.md「回测记录」节"
+            "（`- {YYYY-MM-DD} | 执行者：… | 历史任务标识：… | 结论：…`，日期须紧跟行首 `- `）")
 
 
 def check_attribution_hit_field(root: Path, errors, warns, skip_reasons):
@@ -931,6 +1054,10 @@ def check_attribution_grounding(root: Path, errors, warns, skip_reasons):
 
     同卡逐字档与非逐字档并存时判 WARN 移交人工复核——治具不猜该句出自哪一件，
     猜即越界引入判断层；静默放行则把歧义记成通过。
+    证据枚举面 = 「来源指针」节（SKILL.md 维度 13 成文口径），不是整卡正文：
+    「适用边界」「回测记录」里作为对照或反证出现的 raw 链接一旦参与档位判定，
+    一条顺手引用的逐字件就能把不成立的归因从 ERROR 降成 WARN（假绿方向），
+    反向也能让来源指针干净的卡因他节引用而吃进混档告警（假红方向）。
     """
     if not text_form_adopted(root):
         skip_reasons.append("dimension_13_attribution_grounding:text_form_not_adopted")
@@ -940,8 +1067,9 @@ def check_attribution_grounding(root: Path, errors, warns, skip_reasons):
         phrases = sorted(set(ATTRIBUTION_RE.findall(body)))
         if not phrases:
             continue
+        evidence_text = card_section_body(body, CARD_SOURCE_SECTION) or ""
         raws = []
-        for link in LINK_RE.findall(body):
+        for link in LINK_RE.findall(evidence_text):
             if link.startswith(("http://", "https://")) or RAW_DIR not in link:
                 continue
             target = (card.parent / link.split("#", 1)[0]).resolve()
@@ -1187,12 +1315,19 @@ def check_file(fp: Path, root: Path, whitelist, errors, warns,
                     errors.append(f"{rel}: 交叉引用 — 断链 [{target}]")
         # 维度 7：蒸馏卡规范性（语义要求下沉为结构特征，治具裁定）
         if fp.name.startswith(CARD_PREFIX):
-            for sec in CARD_REQUIRED_SECTIONS:
+            reverse_required = card_effective_date(fp, content) >= CARD_REVERSE_FIELDS_SINCE
+            sections = list(CARD_REQUIRED_SECTIONS) + (
+                list(CARD_REVERSE_SECTIONS) if reverse_required else [])
+            hint = (f"；反向字段自 {CARD_REVERSE_FIELDS_SINCE.isoformat()} 起对新卡生效"
+                    "（存量卡不追改），确无更严/更宽版本时写"
+                    "「无更严分支，因本卡断言 X 已是最严形态」即为已填——空节才算缺")
+            for sec in sections:
+                suffix = hint if sec in CARD_REVERSE_SECTIONS else ""
                 body = card_section_body(content, sec)
                 if body is None:
-                    errors.append(f"{rel}: 蒸馏卡 — 缺少必需章节「{sec}」")
+                    errors.append(f"{rel}: 蒸馏卡 — 缺少必需章节「{sec}」{suffix}")
                 elif not body:
-                    errors.append(f"{rel}: 蒸馏卡 — 章节「{sec}」为空")
+                    errors.append(f"{rel}: 蒸馏卡 — 章节「{sec}」为空{suffix}")
     elif suffix == ".json":
         try:
             data = json.loads(content)
