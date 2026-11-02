@@ -205,7 +205,7 @@ python scripts/validate_release_lock.py --instance <实例根>/程序文件/配�
 - PASS 与 FAIL 报告都以 `compared_against` 自述比对对象路径与形态（`built-release` / `source-working-tree`）。锁钉的是发行副本身份，**判「实例锁是否失效」必须从该实例实际使用的发行副本运行**；从源仓工作树裸跑比出的是「工作树 vs 锁」之差，工作树领先生效副本属交付前常态，此时脚本报 FAIL 但声明**无从裁定锁是否失效**，不得据此登记锁失效或提前重钉。
 - **携带包身份**：校验器的比对对象是脚本自身所在的副本（`PACKAGE_ROOT = Path(__file__).resolve().parents[1]`），无「被检方」入口。要校验宿主 B 的携带包，必须运行 B 自带的那份校验器；B 未自带时**“跑不到”按失败处理，不得读成“通过”**。
 
-**第三方平台的层级变体**：部分发布平台限制包内目录层级（Workbuddy 实测：自压缩包根起最多两级），而本仓发行物含三级路径（`examples/原始采集/文章/`、`examples/程序文件/配置/`）。为该类平台生成变体时：① 超层样本提一级（如 `examples/程序文件/配置/注入面.json` → `examples/程序文件/注入面.json`），字节不变、样本不删；② 变体不发行 `release-manifest.json` 与 `release.json`——提层后二者与包内布局不符，留在包内即属失实自述；因此**变体不得用于发行锁校验或实例初始化**，要跑这两样须回到 `build_release.py` 构建的发行副本。
+**第三方平台的层级变体**：部分发布平台限制包内目录层级（Workbuddy 实测：自压缩包根起最多两级，且带 `agent-wiki/` 外层壳会整体深一层而必拒——变体的 `SKILL.md` 须落在包根），而本仓发行物含三级路径（`examples/原始采集/文章/`、`examples/程序文件/配置/`）。为该类平台生成变体时：① 超层样本提一级（如 `examples/程序文件/配置/注入面.json` → `examples/程序文件/注入面.json`），样本不删；② **同批重写样本内的相对链接**——只移文件不改链接会让包内治具对自己的样本报断链（1.8.0 实测 4 条 ERROR），故「字节不变」只对未被引用的件成立；重写范围限 `examples/**`，`SKILL.md`／`policies/`／`templates/` 里的 `程序文件/配置/` 指实例布局而非包内路径，改了即失实；③ 变体不发行 `release-manifest.json` 与 `release.json`——提层后二者与包内布局不符，留在包内即属失实自述，因此**变体不得用于发行锁校验或实例初始化**，要跑这两样须回到 `build_release.py` 构建的发行副本；④ 连带代价：`examples/程序文件/配置/` 两件提层后，治具按固定相对路径取不到来源白名单与注入面，变体样本上维 6／维 8 记 SKIP（覆盖率 11/16 → 10/16）——变体不演示这两维，属平台层级判据的必然结果而非缺陷。
 
 发布面还要求 `SKILL.md` frontmatter 携带 `version` / `display_name` / `display_name_en` / `description_zh` / `description_en`（缺任一即平台侧解析失败）；其中 `version` 与发行清单的等值由 `tests/test_portable_instance.py` 的 frontmatter 守卫机检，单源仍是发行清单。
 
